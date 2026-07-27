@@ -10,10 +10,10 @@ DerivedData/
 *.hmap
 *.moved-aside
 
-# Xcode (legacy, optional)
-AITranslator.xcodeproj/
-AITranslator/
-scripts/
+# Xcode 旧工程（仅忽略仓库根目录）
+/AITranslator.xcodeproj/
+/AITranslator/
+/scripts/
 *.xcuserstate
 xcuserdata/
 
