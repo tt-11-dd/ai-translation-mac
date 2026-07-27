@@ -1,0 +1,26 @@
+# Build
+.build/
+AITranslatorApp/.build/
+build/
+dist/
+DerivedData/
+*.dSYM
+*.dSYM.zip
+*.ipa
+*.hmap
+*.moved-aside
+
+# Xcode (legacy, optional)
+AITranslator.xcodeproj/
+AITranslator/
+scripts/
+*.xcuserstate
+xcuserdata/
+
+# macOS
+.DS_Store
+*.swp
+*~
+
+# Local packaging leftovers
+*.dmg
