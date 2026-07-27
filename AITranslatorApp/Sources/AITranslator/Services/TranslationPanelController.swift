@@ -22,17 +22,11 @@ final class TranslationPanelController: NSObject {
     }
 
     func show(openSettings: Bool = false) {
-        // 必须先抓划词，再抢焦点，否则选区会丢
-        let selected: String? = {
-            guard AppSettings.shared.useSelectionOnOpen else { return nil }
-            return SelectedTextCapture.capture()
-        }()
-
         if panel == nil {
             createPanel()
         }
 
-        viewModel.prepareForOpen(selectedText: selected)
+        viewModel.prepareForOpen()
 
         guard let panel else { return }
         centerOnScreen(panel)
@@ -42,7 +36,7 @@ final class TranslationPanelController: NSObject {
 
         if openSettings {
             DispatchQueue.main.async {
-                NotificationCenter.default.post(name: .openInAppSettings, object: nil)
+                SettingsWindowController.shared.show()
             }
         }
     }

@@ -4,96 +4,67 @@ struct TranslationPopupView: View {
     @ObservedObject var viewModel: TranslationViewModel
     var onClose: () -> Void
 
-    @State private var showSettings = false
-
     var body: some View {
         VStack(spacing: 0) {
             toolbar
             Divider()
-            if showSettings {
-                settingsPane
-            } else {
-                content
-                Divider()
-                footer
-            }
+            content
+            Divider()
+            footer
         }
         .frame(minWidth: 480, minHeight: 400)
         .background(Color(nsColor: .windowBackgroundColor))
-        .onExitCommand {
-            if showSettings {
-                showSettings = false
-            } else {
-                onClose()
-            }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .openInAppSettings)) { _ in
-            showSettings = true
-        }
+        .onExitCommand { onClose() }
     }
 
     private var toolbar: some View {
         HStack(spacing: 10) {
-            if showSettings {
-                Button {
-                    showSettings = false
-                } label: {
-                    Label("返回翻译", systemImage: "chevron.left")
-                }
-                .buttonStyle(.borderless)
-
-                Text("设置")
-                    .font(.headline)
-
-                Spacer()
+            if AppSettings.shared.smartChineseEnglish {
+                Text("\(viewModel.sourceLanguage.displayName) → \(viewModel.targetLanguage.displayName)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .help("中英智能互翻")
             } else {
-                if AppSettings.shared.smartChineseEnglish {
-                    Text("\(viewModel.sourceLanguage.displayName) → \(viewModel.targetLanguage.displayName)")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .help("中英智能互翻")
-                } else {
-                    Picker("源语言", selection: $viewModel.sourceLanguage) {
-                        ForEach(TranslateLanguage.sourceOptions) { lang in
-                            Text(lang.displayName).tag(lang)
-                        }
+                Picker("源语言", selection: $viewModel.sourceLanguage) {
+                    ForEach(TranslateLanguage.sourceOptions) { lang in
+                        Text(lang.displayName).tag(lang)
                     }
-                    .labelsHidden()
-                    .frame(maxWidth: 140)
-
-                    Button {
-                        viewModel.swapLanguages()
-                    } label: {
-                        Image(systemName: "arrow.left.arrow.right")
-                    }
-                    .buttonStyle(.borderless)
-                    .help("交换语言")
-
-                    Picker("目标语言", selection: $viewModel.targetLanguage) {
-                        ForEach(TranslateLanguage.targetOptions) { lang in
-                            Text(lang.displayName).tag(lang)
-                        }
-                    }
-                    .labelsHidden()
-                    .frame(maxWidth: 140)
                 }
-
-                Spacer()
+                .labelsHidden()
+                .frame(maxWidth: 140)
 
                 Button {
-                    showSettings = true
+                    viewModel.swapLanguages()
                 } label: {
-                    Image(systemName: "gearshape")
+                    Image(systemName: "arrow.left.arrow.right")
                 }
                 .buttonStyle(.borderless)
-                .help("设置")
+                .help("交换语言")
 
-                Button("翻译") {
-                    Task { await viewModel.translate() }
+                Picker("目标语言", selection: $viewModel.targetLanguage) {
+                    ForEach(TranslateLanguage.targetOptions) { lang in
+                        Text(lang.displayName).tag(lang)
+                    }
                 }
-                .keyboardShortcut(.return, modifiers: .command)
-                .disabled(viewModel.isTranslating || viewModel.inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .labelsHidden()
+                .frame(maxWidth: 140)
             }
+
+            Spacer()
+
+            Button {
+                SettingsWindowController.shared.show()
+            } label: {
+                Image(systemName: "gearshape")
+            }
+            .buttonStyle(.borderless)
+            .help("设置")
+
+            Button("翻译") {
+                Task { await viewModel.translate() }
+            }
+            .keyboardShortcut(.return, modifiers: .command)
+            .disabled(viewModel.isTranslating || viewModel.inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
 
             Button {
                 onClose()
@@ -106,12 +77,6 @@ struct TranslationPopupView: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
-    }
-
-    private var settingsPane: some View {
-        SettingsView(embedded: true) {
-            showSettings = false
-        }
     }
 
     private var content: some View {
@@ -166,7 +131,6 @@ struct TranslationPopupView: View {
                         .font(.caption)
                         .lineLimit(1)
                 } else if let status = viewModel.statusMessage, !viewModel.isTranslating {
-                    // 翻译中时不在底部显示状态，避免高度跳动（加载在「译文」旁）
                     Text(status)
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -192,8 +156,4 @@ struct TranslationPopupView: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
     }
-}
-
-extension Notification.Name {
-    static let openInAppSettings = Notification.Name("openInAppSettings")
 }

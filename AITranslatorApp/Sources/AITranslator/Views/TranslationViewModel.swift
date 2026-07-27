@@ -21,8 +21,7 @@ final class TranslationViewModel: ObservableObject {
         targetLanguage = AppSettings.shared.targetLanguage
     }
 
-    /// - Parameter selectedText: 唤起前抓到的划词（优先于剪贴板）
-    func prepareForOpen(selectedText: String? = nil) {
+    func prepareForOpen() {
         sourceLanguage = settings.sourceLanguage
         targetLanguage = settings.targetLanguage
         errorMessage = nil
@@ -35,15 +34,10 @@ final class TranslationViewModel: ObservableObject {
             isTranslating = false
         }
 
-        if let selected = selectedText?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !selected.isEmpty,
-           settings.useSelectionOnOpen {
-            inputText = selected
-            statusMessage = "已填入划词"
-        } else if settings.useClipboardOnOpen,
-                  let clip = NSPasteboard.general.string(forType: .string)?
-                    .trimmingCharacters(in: .whitespacesAndNewlines),
-                  !clip.isEmpty {
+        if settings.useClipboardOnOpen,
+           let clip = NSPasteboard.general.string(forType: .string)?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+           !clip.isEmpty {
             inputText = clip
             statusMessage = "已填入剪贴板"
         }
@@ -125,7 +119,6 @@ final class TranslationViewModel: ObservableObject {
                 statusMessage = "翻译完成"
             }
         } catch is CancellationError {
-            // 被取消时静默忽略
         } catch {
             guard requestID == id else { return }
             if error is CancellationError { return }

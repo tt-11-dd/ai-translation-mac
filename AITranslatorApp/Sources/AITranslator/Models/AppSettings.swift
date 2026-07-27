@@ -4,26 +4,13 @@ import AppKit
 import ServiceManagement
 import ApplicationServices
 
-enum HotKeyKind: String, Codable, Equatable {
-    case keyboard
-    case mouseMiddle
-}
-
 struct HotKeyConfig: Codable, Equatable {
-    var kind: HotKeyKind
     var keyCode: UInt32
     var modifiers: UInt32
 
     static let `default` = HotKeyConfig(
-        kind: .keyboard,
         keyCode: UInt32(kVK_ANSI_T),
         modifiers: UInt32(cmdKey | shiftKey)
-    )
-
-    static let mouseMiddle = HotKeyConfig(
-        kind: .mouseMiddle,
-        keyCode: 0,
-        modifiers: 0
     )
 
     var displayString: String {
@@ -32,16 +19,11 @@ struct HotKeyConfig: Codable, Equatable {
         if modifiers & UInt32(optionKey) != 0 { parts.append("⌥") }
         if modifiers & UInt32(shiftKey) != 0 { parts.append("⇧") }
         if modifiers & UInt32(cmdKey) != 0 { parts.append("⌘") }
-
-        switch kind {
-        case .mouseMiddle:
-            parts.append("鼠标中键")
-        case .keyboard:
-            parts.append(Self.keyName(for: keyCode))
-        }
+        parts.append(Self.keyName(for: keyCode))
         return parts.joined()
     }
 
+    /// 仅接受带修饰键的键盘组合
     static func fromKeyEvent(_ event: NSEvent) -> HotKeyConfig? {
         let keyCode = UInt32(event.keyCode)
         if keyCode == UInt32(kVK_Command) ||
@@ -51,35 +33,10 @@ struct HotKeyConfig: Codable, Equatable {
             keyCode == UInt32(kVK_Function) {
             return nil
         }
-        return HotKeyConfig(
-            kind: .keyboard,
-            keyCode: keyCode,
-            modifiers: carbonModifiers(from: event.modifierFlags)
-        )
-    }
 
-    /// 鼠标中键（buttonNumber == 2），可带修饰键
-    static func fromMouseEvent(_ event: NSEvent) -> HotKeyConfig? {
-        guard event.type == .otherMouseDown || event.type == .otherMouseUp else { return nil }
-        guard event.buttonNumber == 2 else { return nil }
-        return HotKeyConfig(
-            kind: .mouseMiddle,
-            keyCode: 0,
-            modifiers: carbonModifiers(from: event.modifierFlags)
-        )
-    }
-
-    /// 兼容旧版 from(nsEvent:)
-    static func from(nsEvent event: NSEvent) -> HotKeyConfig? {
-        if event.type == .keyDown {
-            return fromKeyEvent(event)
-        }
-        return fromMouseEvent(event)
-    }
-
-    func matchesMouseEvent(_ event: NSEvent) -> Bool {
-        guard kind == .mouseMiddle, event.buttonNumber == 2 else { return false }
-        return Self.carbonModifiers(from: event.modifierFlags) == modifiers
+        let mods = carbonModifiers(from: event.modifierFlags)
+        guard mods != 0 else { return nil }
+        return HotKeyConfig(keyCode: keyCode, modifiers: mods)
     }
 
     private static func carbonModifiers(from flags: NSEvent.ModifierFlags) -> UInt32 {
@@ -92,20 +49,33 @@ struct HotKeyConfig: Codable, Equatable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case kind, keyCode, modifiers
+        case keyCode, modifiers, kind
     }
 
-    init(kind: HotKeyKind, keyCode: UInt32, modifiers: UInt32) {
-        self.kind = kind
+    init(keyCode: UInt32, modifiers: UInt32) {
         self.keyCode = keyCode
         self.modifiers = modifiers
     }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        kind = try c.decodeIfPresent(HotKeyKind.self, forKey: .kind) ?? .keyboard
+        // 兼容旧版含 kind / 鼠标中键的配置
+        if let kind = try c.decodeIfPresent(String.self, forKey: .kind), kind == "mouseMiddle" {
+            self = .default
+            return
+        }
         keyCode = try c.decode(UInt32.self, forKey: .keyCode)
         modifiers = try c.decode(UInt32.self, forKey: .modifiers)
+        if modifiers == 0 {
+            self = .default
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(keyCode, forKey: .keyCode)
+        try c.encode(modifiers, forKey: .modifiers)
+        try c.encode("keyboard", forKey: .kind)
     }
 
     private static func keyName(for keyCode: UInt32) -> String {
@@ -174,16 +144,12 @@ struct HotKeyConfig: Codable, Equatable {
 }
 
 enum AccessibilityHelper {
-    static var isTrusted: Bool {
-        AXIsProcessTrusted()
-    }
+    static var isTrusted: Bool { AXIsProcessTrusted() }
 
-    /// 弹出系统授权提示（若尚未授权）
     @discardableResult
     static func requestTrust() -> Bool {
         let key = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
-        let options = [key: true] as CFDictionary
-        return AXIsProcessTrustedWithOptions(options)
+        return AXIsProcessTrustedWithOptions([key: true] as CFDictionary)
     }
 
     static func openSettings() {
@@ -249,25 +215,14 @@ final class AppSettings: ObservableObject {
         didSet { UserDefaults.standard.set(useClipboardOnOpen, forKey: Keys.useClipboardOnOpen) }
     }
 
-    @Published var autoTranslateOnOpen: Bool {
-        didSet { UserDefaults.standard.set(autoTranslateOnOpen, forKey: Keys.autoTranslateOnOpen) }
-    }
-
     @Published var clearOnOpen: Bool {
         didSet { UserDefaults.standard.set(clearOnOpen, forKey: Keys.clearOnOpen) }
     }
 
-    /// 打开时优先读取划词（选中文本）
-    @Published var useSelectionOnOpen: Bool {
-        didSet { UserDefaults.standard.set(useSelectionOnOpen, forKey: Keys.useSelectionOnOpen) }
-    }
-
-    /// 翻译完成后自动复制译文
     @Published var autoCopyOnComplete: Bool {
         didSet { UserDefaults.standard.set(autoCopyOnComplete, forKey: Keys.autoCopyOnComplete) }
     }
 
-    /// 中英智能互翻（按文本自动中↔英）
     @Published var smartChineseEnglish: Bool {
         didSet { UserDefaults.standard.set(smartChineseEnglish, forKey: Keys.smartChineseEnglish) }
     }
@@ -294,9 +249,7 @@ final class AppSettings: ObservableObject {
         static let targetLanguage = "targetLanguage"
         static let hotKey = "hotKey"
         static let useClipboardOnOpen = "useClipboardOnOpen"
-        static let autoTranslateOnOpen = "autoTranslateOnOpen"
         static let clearOnOpen = "clearOnOpen"
-        static let useSelectionOnOpen = "useSelectionOnOpen"
         static let autoCopyOnComplete = "autoCopyOnComplete"
         static let smartChineseEnglish = "smartChineseEnglish"
     }
@@ -334,22 +287,10 @@ final class AppSettings: ObservableObject {
             useClipboardOnOpen = defaults.bool(forKey: Keys.useClipboardOnOpen)
         }
 
-        if defaults.object(forKey: Keys.autoTranslateOnOpen) == nil {
-            autoTranslateOnOpen = true
-        } else {
-            autoTranslateOnOpen = defaults.bool(forKey: Keys.autoTranslateOnOpen)
-        }
-
         if defaults.object(forKey: Keys.clearOnOpen) == nil {
             clearOnOpen = true
         } else {
             clearOnOpen = defaults.bool(forKey: Keys.clearOnOpen)
-        }
-
-        if defaults.object(forKey: Keys.useSelectionOnOpen) == nil {
-            useSelectionOnOpen = true
-        } else {
-            useSelectionOnOpen = defaults.bool(forKey: Keys.useSelectionOnOpen)
         }
 
         if defaults.object(forKey: Keys.autoCopyOnComplete) == nil {

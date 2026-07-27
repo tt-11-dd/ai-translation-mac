@@ -12,7 +12,7 @@ struct AITranslatorApp: App {
             }
 
             Button("设置…") {
-                TranslationPanelController.shared.show(openSettings: true)
+                SettingsWindowController.shared.show()
             }
 
             Divider()
