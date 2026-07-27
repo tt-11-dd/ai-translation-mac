@@ -7,10 +7,13 @@ import ApplicationServices
 struct HotKeyConfig: Codable, Equatable {
     var keyCode: UInt32
     var modifiers: UInt32
+    /// 录制时记下的按键显示名（便于自定义键）
+    var label: String?
 
     static let `default` = HotKeyConfig(
         keyCode: UInt32(kVK_ANSI_T),
-        modifiers: UInt32(cmdKey | shiftKey)
+        modifiers: UInt32(cmdKey | shiftKey),
+        label: "T"
     )
 
     var displayString: String {
@@ -19,11 +22,15 @@ struct HotKeyConfig: Codable, Equatable {
         if modifiers & UInt32(optionKey) != 0 { parts.append("⌥") }
         if modifiers & UInt32(shiftKey) != 0 { parts.append("⇧") }
         if modifiers & UInt32(cmdKey) != 0 { parts.append("⌘") }
-        parts.append(Self.keyName(for: keyCode))
+        if let label, !label.isEmpty {
+            parts.append(label)
+        } else {
+            parts.append(Self.keyName(for: keyCode))
+        }
         return parts.joined()
     }
 
-    /// 仅接受带修饰键的键盘组合
+    /// 单键或组合键均可；自定义键用 keyCode + 显示名记录
     static func fromKeyEvent(_ event: NSEvent) -> HotKeyConfig? {
         let keyCode = UInt32(event.keyCode)
         if keyCode == UInt32(kVK_Command) ||
@@ -35,8 +42,24 @@ struct HotKeyConfig: Codable, Equatable {
         }
 
         let mods = carbonModifiers(from: event.modifierFlags)
-        guard mods != 0 else { return nil }
-        return HotKeyConfig(keyCode: keyCode, modifiers: mods)
+        let label = Self.displayLabel(from: event) ?? Self.keyName(for: keyCode)
+        return HotKeyConfig(keyCode: keyCode, modifiers: mods, label: label)
+    }
+
+    private static func displayLabel(from event: NSEvent) -> String? {
+        if let chars = event.charactersIgnoringModifiers?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+           !chars.isEmpty {
+            // 可打印字符直接展示
+            let filtered = chars.filter { scalar in
+                let v = scalar.unicodeScalars.first?.value ?? 0
+                return v >= 32 && v != 127
+            }
+            if !filtered.isEmpty {
+                return String(filtered).uppercased()
+            }
+        }
+        return nil
     }
 
     private static func carbonModifiers(from flags: NSEvent.ModifierFlags) -> UInt32 {
@@ -49,26 +72,24 @@ struct HotKeyConfig: Codable, Equatable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case keyCode, modifiers, kind
+        case keyCode, modifiers, kind, label
     }
 
-    init(keyCode: UInt32, modifiers: UInt32) {
+    init(keyCode: UInt32, modifiers: UInt32, label: String? = nil) {
         self.keyCode = keyCode
         self.modifiers = modifiers
+        self.label = label
     }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        // 兼容旧版含 kind / 鼠标中键的配置
         if let kind = try c.decodeIfPresent(String.self, forKey: .kind), kind == "mouseMiddle" {
             self = .default
             return
         }
         keyCode = try c.decode(UInt32.self, forKey: .keyCode)
         modifiers = try c.decode(UInt32.self, forKey: .modifiers)
-        if modifiers == 0 {
-            self = .default
-        }
+        label = try c.decodeIfPresent(String.self, forKey: .label)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -76,6 +97,7 @@ struct HotKeyConfig: Codable, Equatable {
         try c.encode(keyCode, forKey: .keyCode)
         try c.encode(modifiers, forKey: .modifiers)
         try c.encode("keyboard", forKey: .kind)
+        try c.encodeIfPresent(label, forKey: .label)
     }
 
     private static func keyName(for keyCode: UInt32) -> String {

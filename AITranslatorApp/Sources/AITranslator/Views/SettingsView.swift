@@ -2,29 +2,10 @@ import SwiftUI
 import Carbon
 import AppKit
 
-private enum SettingsSection: String, CaseIterable, Identifiable {
-    case service = "服务"
-    case hotkey = "快捷键"
-    case translate = "翻译"
-    case general = "通用"
-
-    var id: String { rawValue }
-
-    var icon: String {
-        switch self {
-        case .service: return "cloud.fill"
-        case .hotkey: return "keyboard"
-        case .translate: return "character.book.closed.fill"
-        case .general: return "gearshape.fill"
-        }
-    }
-}
-
 struct SettingsView: View {
     var onClose: (() -> Void)? = nil
 
     @ObservedObject private var settings = AppSettings.shared
-    @State private var section: SettingsSection = .service
     @State private var isRecordingHotKey = false
     @State private var showAPIKey = false
     @State private var localMonitor: Any?
@@ -34,16 +15,19 @@ struct SettingsView: View {
         VStack(spacing: 0) {
             header
             Divider()
-            HStack(spacing: 0) {
-                sidebar
-                Divider()
-                detail
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 22) {
+                    serviceBlock
+                    hotkeyBlock
+                    translateBlock
+                    generalBlock
+                }
+                .padding(20)
             }
             Divider()
             footer
         }
-        .frame(width: 520, height: 620)
+        .frame(width: 480, height: 640)
         .background(Color(nsColor: .windowBackgroundColor))
         .onAppear { settings.refreshLaunchAtLoginStatus() }
         .onDisappear { stopRecording() }
@@ -74,60 +58,9 @@ struct SettingsView: View {
         .padding(.vertical, 14)
     }
 
-    private var sidebar: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            ForEach(SettingsSection.allCases) { item in
-                Button {
-                    withAnimation(.easeInOut(duration: 0.15)) {
-                        section = item
-                    }
-                    if item != .hotkey { stopRecording() }
-                } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: item.icon)
-                            .frame(width: 16)
-                        Text(item.rawValue)
-                        Spacer()
-                    }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 8)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(section == item ? Color.accentColor.opacity(0.15) : Color.clear)
-                    )
-                    .foregroundStyle(section == item ? Color.accentColor : Color.primary)
-                }
-                .buttonStyle(.plain)
-            }
-            Spacer()
-        }
-        .padding(12)
-        .frame(width: 140)
-        .background(Color(nsColor: .controlBackgroundColor).opacity(0.55))
-    }
-
-    @ViewBuilder
-    private var detail: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                switch section {
-                case .service:
-                    serviceSection
-                case .hotkey:
-                    hotkeySection
-                case .translate:
-                    translateSection
-                case .general:
-                    generalSection
-                }
-            }
-            .padding(20)
-        }
-    }
-
     private var footer: some View {
         HStack {
-            Text(sectionHint)
+            Text("当前快捷键：\(settings.hotKey.displayString)")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
@@ -142,20 +75,11 @@ struct SettingsView: View {
         .padding(.vertical, 12)
     }
 
-    private var sectionHint: String {
-        switch section {
-        case .service: return "翻译请求使用这里的 Key / URL / 模型"
-        case .hotkey: return "当前：\(settings.hotKey.displayString)"
-        case .translate: return settings.smartChineseEnglish ? "中英智能互翻已开启" : "使用手动语言"
-        case .general: return "登录项与窗口行为"
-        }
-    }
+    // MARK: - Blocks
 
-    // MARK: - Sections
-
-    private var serviceSection: some View {
-        settingsCard(title: "DeepSeek 服务", subtitle: "接口凭证与模型") {
-            labeledField("API Key") {
+    private var serviceBlock: some View {
+        section("DeepSeek 服务", tip: "翻译请求使用这里的配置") {
+            field("API Key") {
                 HStack(spacing: 8) {
                     Group {
                         if showAPIKey {
@@ -175,28 +99,24 @@ struct SettingsView: View {
                 }
             }
 
-            labeledField("API Base URL") {
+            field("API Base URL") {
                 TextField("https://api.deepseek.com", text: $settings.apiBaseURL)
                     .textFieldStyle(.roundedBorder)
             }
 
-            labeledField("模型") {
+            field("模型") {
                 TextField("deepseek-chat", text: $settings.model)
                     .textFieldStyle(.roundedBorder)
             }
-
-            Text("也可填写 deepseek-reasoner 等兼容模型名")
-                .font(.caption)
-                .foregroundStyle(.secondary)
         }
     }
 
-    private var hotkeySection: some View {
-        settingsCard(title: "唤起快捷键", subtitle: "需包含至少一个修饰键（⌘ ⌥ ⇧ ⌃）") {
-            HStack(spacing: 12) {
+    private var hotkeyBlock: some View {
+        section("唤起快捷键", tip: "支持单键或组合键，也可录制键盘自定义键") {
+            HStack(spacing: 10) {
                 Text(settings.hotKey.displayString)
-                    .font(.system(size: 22, weight: .semibold, design: .rounded))
-                    .padding(.horizontal, 16)
+                    .font(.system(size: 20, weight: .semibold, design: .rounded))
+                    .padding(.horizontal, 14)
                     .padding(.vertical, 10)
                     .frame(maxWidth: .infinity)
                     .background(
@@ -207,10 +127,10 @@ struct SettingsView: View {
                     )
                     .overlay(
                         RoundedRectangle(cornerRadius: 10)
-                            .stroke(isRecordingHotKey ? Color.accentColor.opacity(0.5) : Color.secondary.opacity(0.2))
+                            .stroke(isRecordingHotKey ? Color.accentColor.opacity(0.5) : Color.secondary.opacity(0.18))
                     )
 
-                Button(isRecordingHotKey ? "按下组合键…" : "录制") {
+                Button(isRecordingHotKey ? "按下…" : "录制") {
                     if isRecordingHotKey { stopRecording() } else { startRecording() }
                 }
                 .buttonStyle(.borderedProminent)
@@ -224,97 +144,87 @@ struct SettingsView: View {
             }
 
             Text(isRecordingHotKey
-                 ? "请按下新的组合键，Esc 取消"
-                 : "例如 ⌘⇧T、⌥Space、⌃⌥T")
+                 ? "请按下任意键或组合键，Esc 取消"
+                 : "例如 F8、⌘⇧T、⌥Space，或你键盘上的自定义键")
                 .font(.caption)
                 .foregroundStyle(isRecordingHotKey ? .red : .secondary)
         }
     }
 
-    private var translateSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            settingsCard(title: "语言策略", subtitle: "决定如何选择源语言与目标语言") {
-                Toggle(isOn: $settings.smartChineseEnglish) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("中英智能互翻")
-                        Text("中文→英文，英文→中文")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+    private var translateBlock: some View {
+        section("翻译偏好", tip: "语言策略与打开行为") {
+            Toggle(isOn: $settings.smartChineseEnglish) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("中英智能互翻")
+                    Text("中文→英文，英文→中文")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .toggleStyle(.switch)
+
+            if !settings.smartChineseEnglish {
+                Picker("源语言", selection: $settings.sourceLanguage) {
+                    ForEach(TranslateLanguage.sourceOptions) { lang in
+                        Text(lang.displayName).tag(lang)
                     }
                 }
-                .toggleStyle(.switch)
-
-                if !settings.smartChineseEnglish {
-                    Divider()
-                    Picker("源语言", selection: $settings.sourceLanguage) {
-                        ForEach(TranslateLanguage.sourceOptions) { lang in
-                            Text(lang.displayName).tag(lang)
-                        }
-                    }
-                    Picker("目标语言", selection: $settings.targetLanguage) {
-                        ForEach(TranslateLanguage.targetOptions) { lang in
-                            Text(lang.displayName).tag(lang)
-                        }
+                Picker("目标语言", selection: $settings.targetLanguage) {
+                    ForEach(TranslateLanguage.targetOptions) { lang in
+                        Text(lang.displayName).tag(lang)
                     }
                 }
             }
 
-            settingsCard(title: "打开与结果", subtitle: "窗口唤起后的默认行为") {
-                Toggle("打开时清空上次内容", isOn: $settings.clearOnOpen)
-                Toggle("打开时读取剪贴板", isOn: $settings.useClipboardOnOpen)
-                Toggle("译完自动复制", isOn: $settings.autoCopyOnComplete)
+            Divider().padding(.vertical, 2)
 
-                Text("剪贴板仅填入原文，需手动点击翻译")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
+            Toggle("打开时清空上次内容", isOn: $settings.clearOnOpen)
+            Toggle("打开时读取剪贴板", isOn: $settings.useClipboardOnOpen)
+            Toggle("译完自动复制", isOn: $settings.autoCopyOnComplete)
         }
     }
 
-    private var generalSection: some View {
-        settingsCard(title: "通用", subtitle: "系统与启动") {
+    private var generalBlock: some View {
+        section("通用", tip: "系统启动项") {
             Toggle("登录时启动", isOn: $settings.launchAtLogin)
             if let error = settings.launchAtLoginError {
                 Text(error)
                     .font(.caption)
                     .foregroundStyle(.red)
             }
-            Text("开启后随 macOS 登录自动在后台运行")
-                .font(.caption)
-                .foregroundStyle(.secondary)
         }
     }
 
-    // MARK: - Helpers
+    // MARK: - Layout helpers
 
-    private func settingsCard<Content: View>(
-        title: String,
-        subtitle: String,
+    private func section<Content: View>(
+        _ title: String,
+        tip: String,
         @ViewBuilder content: () -> Content
     ) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
-                    .font(.headline)
-                Text(subtitle)
+                    .font(.subheadline.weight(.semibold))
+                Text(tip)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
             content()
         }
-        .padding(16)
+        .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 12)
-                .fill(Color(nsColor: .controlBackgroundColor).opacity(0.65))
+                .fill(Color(nsColor: .controlBackgroundColor).opacity(0.55))
         )
         .overlay(
             RoundedRectangle(cornerRadius: 12)
-                .stroke(Color.secondary.opacity(0.12))
+                .stroke(Color.secondary.opacity(0.1))
         )
     }
 
-    private func labeledField<Content: View>(
+    private func field<Content: View>(
         _ title: String,
         @ViewBuilder content: () -> Content
     ) -> some View {
@@ -325,6 +235,8 @@ struct SettingsView: View {
             content()
         }
     }
+
+    // MARK: - Hotkey recording
 
     private func startRecording() {
         stopRecording()

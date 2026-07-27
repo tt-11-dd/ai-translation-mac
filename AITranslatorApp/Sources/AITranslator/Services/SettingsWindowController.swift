@@ -38,7 +38,7 @@ final class SettingsWindowController: NSObject {
             SettingsWindowController.shared.hide()
         }
         let hosting = NSHostingView(rootView: content)
-        hosting.frame = NSRect(x: 0, y: 0, width: 520, height: 620)
+        hosting.frame = NSRect(x: 0, y: 0, width: 480, height: 640)
 
         let window = NSWindow(
             contentRect: hosting.frame,
