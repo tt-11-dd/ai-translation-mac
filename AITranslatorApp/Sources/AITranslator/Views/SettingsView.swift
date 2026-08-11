@@ -6,28 +6,23 @@ struct SettingsView: View {
     var onClose: (() -> Void)? = nil
 
     @ObservedObject private var settings = AppSettings.shared
+    @ObservedObject private var usageStore = UsageStore.shared
     @State private var isRecordingHotKey = false
     @State private var showAPIKey = false
     @State private var localMonitor: Any?
     @State private var globalMonitor: Any?
+    @State private var newGlossarySource = ""
+    @State private var newGlossaryTarget = ""
 
     var body: some View {
         VStack(spacing: 0) {
             header
             Divider()
-            ScrollView {
-                VStack(alignment: .leading, spacing: 22) {
-                    serviceBlock
-                    hotkeyBlock
-                    translateBlock
-                    generalBlock
-                }
-                .padding(20)
-            }
+            content
             Divider()
             footer
         }
-        .frame(width: 480, height: 640)
+        .frame(width: 860)
         .background(Color(nsColor: .windowBackgroundColor))
         .onAppear { settings.refreshLaunchAtLoginStatus() }
         .onDisappear { stopRecording() }
@@ -38,6 +33,41 @@ struct SettingsView: View {
                 onClose?()
             }
         }
+    }
+
+    /// 左中右三栏布局
+    private var content: some View {
+        HStack(alignment: .top, spacing: 14) {
+            leftColumn
+            middleColumn
+            rightColumn
+        }
+        .padding(16)
+    }
+
+    /// 左栏：翻译服务
+    private var leftColumn: some View {
+        serviceBlock
+            .frame(maxWidth: .infinity)
+    }
+
+    /// 中栏：快捷键 + 翻译偏好
+    private var middleColumn: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            hotkeyBlock
+            translateBlock
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    /// 右栏：术语表 + 通用 + 用量
+    private var rightColumn: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            glossaryBlock
+            generalBlock
+            usageBlock
+        }
+        .frame(maxWidth: .infinity)
     }
 
     private var header: some View {
@@ -78,7 +108,20 @@ struct SettingsView: View {
     // MARK: - Blocks
 
     private var serviceBlock: some View {
-        section("DeepSeek 服务", tip: "翻译请求使用这里的配置") {
+        section("翻译服务", tip: "支持 DeepSeek 等 OpenAI 兼容接口") {
+            Picker("服务商", selection: $settings.providerPreset) {
+                ForEach(ProviderPreset.allCases) { preset in
+                    Text(preset.displayName).tag(preset)
+                }
+            }
+            .pickerStyle(.menu)
+            .onChange(of: settings.providerPreset) { _, newValue in
+                if newValue != .custom {
+                    settings.apiBaseURL = newValue.baseURL
+                    settings.model = newValue.defaultModel
+                }
+            }
+
             field("API Key") {
                 HStack(spacing: 8) {
                     Group {
@@ -97,6 +140,12 @@ struct SettingsView: View {
                     }
                     .buttonStyle(.borderless)
                 }
+            }
+
+            if settings.apiKey.isEmpty {
+                Label("未配置 API Key，翻译前请先填写", systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
             }
 
             field("API Base URL") {
@@ -178,9 +227,100 @@ struct SettingsView: View {
 
             Divider().padding(.vertical, 2)
 
+            Picker("翻译风格", selection: $settings.translationStyle) {
+                ForEach(TranslationStyle.allCases) { style in
+                    Text(style.displayName).tag(style)
+                }
+            }
+
             Toggle("打开时清空上次内容", isOn: $settings.clearOnOpen)
             Toggle("打开时读取剪贴板", isOn: $settings.useClipboardOnOpen)
             Toggle("译完自动复制", isOn: $settings.autoCopyOnComplete)
+        }
+    }
+
+    private var glossaryBlock: some View {
+        section("术语表", tip: "指定术语的强制译法，翻译时生效") {
+            if settings.glossary.isEmpty {
+                Text("暂无术语。添加后翻译时会优先使用你指定的译法。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(settings.glossary) { entry in
+                    HStack(spacing: 8) {
+                        Text(entry.source)
+                            .font(.system(.body, design: .monospaced))
+                        Text("→")
+                            .foregroundStyle(.secondary)
+                        Text(entry.target)
+                            .font(.system(.body, design: .monospaced))
+                        Spacer()
+                        Button {
+                            settings.glossary.removeAll { $0.id == entry.id }
+                        } label: {
+                            Image(systemName: "trash")
+                                .foregroundStyle(.red)
+                        }
+                        .buttonStyle(.borderless)
+                    }
+                    .padding(.vertical, 2)
+                }
+            }
+
+            Divider().padding(.vertical, 2)
+
+            HStack(spacing: 8) {
+                TextField("原文术语", text: $newGlossarySource)
+                    .textFieldStyle(.roundedBorder)
+                TextField("译法", text: $newGlossaryTarget)
+                    .textFieldStyle(.roundedBorder)
+                Button("添加") {
+                    let source = newGlossarySource.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let target = newGlossaryTarget.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !source.isEmpty, !target.isEmpty else { return }
+                    settings.glossary.append(GlossaryEntry(source: source, target: target))
+                    newGlossarySource = ""
+                    newGlossaryTarget = ""
+                }
+                .disabled(newGlossarySource.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                          || newGlossaryTarget.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+    }
+
+    private var usageBlock: some View {
+        section("用量统计", tip: "本地记录，仅用于参考 API 消耗") {
+            let current = usageStore.currentUsage
+            HStack(spacing: 24) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(UsageStore.formatted(current.characterCount))
+                        .font(.title3.weight(.semibold))
+                    Text("本月字符")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(UsageStore.formatted(current.requestCount))
+                        .font(.title3.weight(.semibold))
+                    Text("本月请求")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(UsageStore.formatted(usageStore.totalCharacters))
+                        .font(.title3.weight(.semibold))
+                    Text("累计字符")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+            }
+            .padding(.vertical, 4)
+
+            Button("重置统计", role: .destructive) {
+                usageStore.reset()
+            }
+            .controlSize(.small)
         }
     }
 

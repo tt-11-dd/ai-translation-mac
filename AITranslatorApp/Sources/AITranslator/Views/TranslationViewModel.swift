@@ -10,6 +10,7 @@ final class TranslationViewModel: ObservableObject {
     @Published var isTranslating = false
     @Published var errorMessage: String?
     @Published var statusMessage: String?
+    @Published var isSpeaking = false
 
     private let translator = DeepSeekTranslator.makeDefault()
     private let settings = AppSettings.shared
@@ -56,8 +57,20 @@ final class TranslationViewModel: ObservableObject {
 
     func swapLanguages() {
         if sourceLanguage == .auto {
-            sourceLanguage = targetLanguage
-            targetLanguage = .english
+            // 自动检测时没有明确的源语言，反向推导：把当前目标语作为新的源语言
+            let newSource = targetLanguage
+            // 目标语言则根据新源语给一个合理的默认值（中↔英，其余语言回中文）
+            let newTarget: TranslateLanguage
+            switch newSource {
+            case .chinese:
+                newTarget = .english
+            case .english:
+                newTarget = .chinese
+            default:
+                newTarget = .chinese
+            }
+            sourceLanguage = newSource
+            targetLanguage = newTarget
         } else {
             let oldSource = sourceLanguage
             sourceLanguage = targetLanguage
@@ -111,6 +124,17 @@ final class TranslationViewModel: ObservableObject {
             settings.sourceLanguage = sourceLanguage
             settings.targetLanguage = targetLanguage
 
+            // 记录历史
+            HistoryStore.shared.add(
+                source: inputText,
+                target: result,
+                sourceLanguage: sourceLanguage,
+                targetLanguage: targetLanguage
+            )
+
+            // 记录用量（按输入字符数）
+            UsageStore.shared.record(characters: inputText.count)
+
             if settings.autoCopyOnComplete {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(result, forType: .string)
@@ -138,6 +162,22 @@ final class TranslationViewModel: ObservableObject {
         statusMessage = "已复制到剪贴板"
     }
 
+    func toggleSpeakResult() {
+        guard !outputText.isEmpty else { return }
+        if isSpeaking {
+            TTSSpeaker.shared.stop()
+            isSpeaking = false
+        } else {
+            TTSSpeaker.shared.onFinish = { [weak self] in
+                Task { @MainActor in
+                    self?.isSpeaking = false
+                }
+            }
+            TTSSpeaker.shared.speak(outputText, language: targetLanguage)
+            isSpeaking = true
+        }
+    }
+
     func clear() {
         translateTask?.cancel()
         inputText = ""
@@ -145,5 +185,42 @@ final class TranslationViewModel: ObservableObject {
         errorMessage = nil
         statusMessage = nil
         isTranslating = false
+    }
+
+    /// 取消进行中的翻译（窗口隐藏时调用）
+    func cancelTranslating() {
+        translateTask?.cancel()
+        isTranslating = false
+    }
+
+    /// 从历史记录回填原文与译文
+    func restoreFromHistory(_ item: HistoryItem) {
+        translateTask?.cancel()
+        inputText = item.source
+        outputText = item.target
+        errorMessage = nil
+        statusMessage = "已从历史回填"
+        isTranslating = false
+    }
+
+    /// 从历史记录回填原文并立即重新翻译（忽略历史译文）
+    func restoreFromHistoryAndTranslate(_ item: HistoryItem) {
+        translateTask?.cancel()
+        inputText = item.source
+        outputText = ""
+        errorMessage = nil
+        isTranslating = false
+        applySmartLanguagesIfNeeded()
+        Task { await translate() }
+    }
+
+    /// 设置外部传入的文本（如选中文本），并应用智能语言判断
+    func setExternalText(_ text: String) {
+        translateTask?.cancel()
+        inputText = text
+        outputText = ""
+        errorMessage = nil
+        isTranslating = false
+        applySmartLanguagesIfNeeded()
     }
 }

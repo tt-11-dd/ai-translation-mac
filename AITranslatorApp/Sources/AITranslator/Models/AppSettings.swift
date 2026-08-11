@@ -165,6 +165,19 @@ struct HotKeyConfig: Codable, Equatable {
     }
 }
 
+/// 一条术语映射：翻译时强制将 source 替换为 target
+struct GlossaryEntry: Codable, Identifiable, Equatable {
+    let id: UUID
+    var source: String
+    var target: String
+
+    init(id: UUID = UUID(), source: String, target: String) {
+        self.id = id
+        self.source = source
+        self.target = target
+    }
+}
+
 enum AccessibilityHelper {
     static var isTrusted: Bool { AXIsProcessTrusted() }
 
@@ -206,7 +219,14 @@ final class AppSettings: ObservableObject {
     static let shared = AppSettings()
 
     @Published var apiKey: String {
-        didSet { UserDefaults.standard.set(apiKey, forKey: Keys.apiKey) }
+        didSet {
+            // 空字符串表示清空 Keychain；否则同步保存
+            if apiKey.isEmpty {
+                KeychainHelper.delete()
+            } else {
+                KeychainHelper.save(apiKey)
+            }
+        }
     }
 
     @Published var apiBaseURL: String {
@@ -215,6 +235,10 @@ final class AppSettings: ObservableObject {
 
     @Published var model: String {
         didSet { UserDefaults.standard.set(model, forKey: Keys.model) }
+    }
+
+    @Published var providerPreset: ProviderPreset {
+        didSet { UserDefaults.standard.set(providerPreset.rawValue, forKey: Keys.providerPreset) }
     }
 
     @Published var sourceLanguage: TranslateLanguage {
@@ -249,6 +273,22 @@ final class AppSettings: ObservableObject {
         didSet { UserDefaults.standard.set(smartChineseEnglish, forKey: Keys.smartChineseEnglish) }
     }
 
+    @Published var glossary: [GlossaryEntry] {
+        didSet {
+            if let data = try? JSONEncoder().encode(glossary) {
+                UserDefaults.standard.set(data, forKey: Keys.glossary)
+            }
+        }
+    }
+
+    @Published var translationStyle: TranslationStyle {
+        didSet { UserDefaults.standard.set(translationStyle.rawValue, forKey: Keys.translationStyle) }
+    }
+
+    @Published var editorFontSize: Double {
+        didSet { UserDefaults.standard.set(editorFontSize, forKey: Keys.editorFontSize) }
+    }
+
     @Published var launchAtLogin: Bool {
         didSet {
             guard launchAtLogin != LaunchAtLoginHelper.isEnabled else { return }
@@ -264,9 +304,9 @@ final class AppSettings: ObservableObject {
     @Published var launchAtLoginError: String?
 
     private enum Keys {
-        static let apiKey = "apiKey"
         static let apiBaseURL = "apiBaseURL"
         static let model = "model"
+        static let providerPreset = "providerPreset"
         static let sourceLanguage = "sourceLanguage"
         static let targetLanguage = "targetLanguage"
         static let hotKey = "hotKey"
@@ -274,13 +314,35 @@ final class AppSettings: ObservableObject {
         static let clearOnOpen = "clearOnOpen"
         static let autoCopyOnComplete = "autoCopyOnComplete"
         static let smartChineseEnglish = "smartChineseEnglish"
+        static let glossary = "glossary"
+        static let translationStyle = "translationStyle"
+        static let editorFontSize = "editorFontSize"
     }
 
     private init() {
         let defaults = UserDefaults.standard
-        apiKey = defaults.string(forKey: Keys.apiKey) ?? ""
-        apiBaseURL = defaults.string(forKey: Keys.apiBaseURL) ?? "https://api.deepseek.com"
-        model = defaults.string(forKey: Keys.model) ?? "deepseek-chat"
+        // API Key 只从 Keychain 读取，不再写 UserDefaults，避免明文泄露
+        var storedAPIKey = KeychainHelper.load() ?? ""
+
+        // 迁移旧版本：如果 UserDefaults 里残留旧 Key 而 Keychain 为空，迁入 Keychain 后删除明文
+        if storedAPIKey.isEmpty {
+            if let legacy = defaults.string(forKey: "apiKey"), !legacy.isEmpty {
+                storedAPIKey = legacy
+                KeychainHelper.save(legacy)
+                defaults.removeObject(forKey: "apiKey")
+            }
+        }
+        apiKey = storedAPIKey
+
+        apiBaseURL = defaults.string(forKey: Keys.apiBaseURL) ?? ProviderPreset.deepseek.baseURL
+        model = defaults.string(forKey: Keys.model) ?? ProviderPreset.deepseek.defaultModel
+
+        if let raw = defaults.string(forKey: Keys.providerPreset),
+           let preset = ProviderPreset(rawValue: raw) {
+            providerPreset = preset
+        } else {
+            providerPreset = .deepseek
+        }
 
         if let raw = defaults.string(forKey: Keys.sourceLanguage),
            let lang = TranslateLanguage(rawValue: raw) {
@@ -325,6 +387,26 @@ final class AppSettings: ObservableObject {
             smartChineseEnglish = true
         } else {
             smartChineseEnglish = defaults.bool(forKey: Keys.smartChineseEnglish)
+        }
+
+        if let data = defaults.data(forKey: Keys.glossary),
+           let decoded = try? JSONDecoder().decode([GlossaryEntry].self, from: data) {
+            glossary = decoded
+        } else {
+            glossary = []
+        }
+
+        if let raw = defaults.string(forKey: Keys.translationStyle),
+           let style = TranslationStyle(rawValue: raw) {
+            translationStyle = style
+        } else {
+            translationStyle = .general
+        }
+
+        if defaults.object(forKey: Keys.editorFontSize) == nil {
+            editorFontSize = 14
+        } else {
+            editorFontSize = defaults.double(forKey: Keys.editorFontSize)
         }
 
         launchAtLogin = LaunchAtLoginHelper.isEnabled

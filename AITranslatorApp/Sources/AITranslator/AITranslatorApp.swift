@@ -11,6 +11,12 @@ struct AITranslatorApp: App {
                 TranslationPanelController.shared.show()
             }
 
+            Button("翻译选中文本") {
+                TranslationPanelController.shared.translateSelection()
+            }
+
+            Divider()
+
             Button("设置…") {
                 SettingsWindowController.shared.show()
             }

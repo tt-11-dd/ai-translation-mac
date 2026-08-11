@@ -12,13 +12,15 @@ enum TranslationError: LocalizedError, Equatable {
     var errorDescription: String? {
         switch self {
         case .missingAPIKey:
-            return "请先在设置中填写 DeepSeek API Key"
+            return "请先在设置中填写 API Key"
         case .emptyText:
             return "请输入要翻译的文本"
         case .invalidURL:
             return "API 地址无效"
         case .httpStatus(let code, let body):
-            return "请求失败 (\(code)): \(body)"
+            let message = Self.extractErrorMessage(from: body) ?? body
+            let preview = String(message.prefix(200))
+            return "请求失败 (\(code)): \(preview)"
         case .emptyResponse:
             return "模型返回了空结果"
         case .decodingFailed:
@@ -27,10 +29,27 @@ enum TranslationError: LocalizedError, Equatable {
             return nil
         }
     }
+
+    /// 从 OpenAI 兼容错误体 {"error":{"message":"..."}} 里提取人话信息
+    static func extractErrorMessage(from body: String) -> String? {
+        guard let data = body.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let error = json["error"] as? [String: Any],
+              let message = error["message"] as? String,
+              !message.isEmpty else {
+            return nil
+        }
+        return message
+    }
 }
 
 struct DeepSeekTranslator {
     private let settings: AppSettings
+
+    /// 超过该长度触发分块翻译
+    private static let chunkThreshold = 4000
+    /// 每个分块的目标字符数
+    private static let chunkSize = 2500
 
     init(settings: AppSettings) {
         self.settings = settings
@@ -41,7 +60,7 @@ struct DeepSeekTranslator {
         DeepSeekTranslator(settings: .shared)
     }
 
-    /// 流式翻译：每收到一段内容就回调累计全文
+    /// 流式翻译：每收到一段内容就回调累计全文；超长文本自动分块逐段翻译
     @MainActor
     func translateStream(
         text: String,
@@ -60,24 +79,60 @@ struct DeepSeekTranslator {
             throw TranslationError.invalidURL
         }
 
-        let systemPrompt = """
-        You are a professional translation engine.
-        Translate the user's text accurately and naturally.
-        Preserve meaning, tone, and formatting (line breaks, markdown, code blocks).
-        Output ONLY the translation. Do not add explanations, quotes, or notes.
-        """
-
+        let systemPrompt = buildSystemPrompt()
         let sourceHint = source == .auto
             ? "Detect the source language automatically."
             : "Source language: \(source.promptName)."
-        let userPrompt = """
-        \(sourceHint)
-        Target language: \(target.promptName).
 
-        Text to translate:
-        \(trimmed)
-        """
+        let chunks = Self.splitIntoChunks(trimmed)
+        var prefix = ""
+        var allResults: [String] = []
 
+        for (index, chunk) in chunks.enumerated() {
+            try Task.checkCancellation()
+
+            let userPrompt = """
+            \(sourceHint)
+            Target language: \(target.promptName).
+
+            Text to translate:
+            \(chunk)
+            """
+            let chunkResult = try await streamOnce(
+                url: url,
+                apiKey: apiKey,
+                systemPrompt: systemPrompt,
+                userPrompt: userPrompt
+            ) { [prefix] partial in
+                // 已有分块的结果 + 当前分块的累计输出
+                let combined = prefix.isEmpty ? partial : prefix + "\n" + partial
+                onUpdate(combined)
+            }
+
+            allResults.append(chunkResult)
+            prefix = allResults.joined(separator: "\n")
+
+            // 多于一个分块时，在分块间隙也同步一次完整结果
+            if chunks.count > 1 && index < chunks.count - 1 {
+                onUpdate(prefix)
+            }
+        }
+
+        let result = prefix.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !result.isEmpty else { throw TranslationError.emptyResponse }
+        return result
+    }
+
+    // MARK: - 单次流式请求
+
+    @MainActor
+    private func streamOnce(
+        url: URL,
+        apiKey: String,
+        systemPrompt: String,
+        userPrompt: String,
+        onUpdate: @escaping @MainActor (String) -> Void
+    ) async throws -> String {
         let body: [String: Any] = [
             "model": settings.model,
             "temperature": 0.2,
@@ -131,7 +186,7 @@ struct DeepSeekTranslator {
                 continue
             }
 
-            // 兼容 delta / message
+            // 兼容 delta / message（deepseek-reasoner 的 reasoning_content 会被忽略，只取 content）
             let piece: String?
             if let delta = first["delta"] as? [String: Any] {
                 piece = delta["content"] as? String
@@ -149,5 +204,81 @@ struct DeepSeekTranslator {
         let result = assembled.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !result.isEmpty else { throw TranslationError.emptyResponse }
         return result
+    }
+
+    // MARK: - System prompt 与分块
+
+    @MainActor
+    private func buildSystemPrompt() -> String {
+        var prompt = """
+        You are a professional translation engine.
+        Translate the user's text accurately and naturally.
+        Preserve meaning, tone, and formatting (line breaks, markdown, code blocks).
+        Output ONLY the translation. Do not add explanations, quotes, or notes.
+        \(settings.translationStyle.promptInstruction)
+        """
+
+        if !settings.glossary.isEmpty {
+            let entries = settings.glossary
+                .filter { !$0.source.isEmpty && !$0.target.isEmpty }
+                .map { "\($0.source) → \($0.target)" }
+            if !entries.isEmpty {
+                prompt += """
+
+                Use the following glossary. For these terms, ALWAYS use the specified translation even if context suggests otherwise:
+                \(entries.joined(separator: "\n"))
+                """
+            }
+        }
+
+        return prompt
+    }
+
+    /// 把长文本按段落切块，每块不超过 chunkSize 字符；不足阈值时直接整段返回
+    static func splitIntoChunks(_ text: String, threshold: Int = chunkThreshold, size: Int = chunkSize) -> [String] {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return [] }
+        if trimmed.count <= threshold { return [trimmed] }
+
+        let paragraphs = trimmed.components(separatedBy: .newlines)
+        var chunks: [String] = []
+        var current = ""
+
+        func flush() {
+            if !current.isEmpty {
+                chunks.append(current)
+                current = ""
+            }
+        }
+
+        for para in paragraphs {
+            if para.count > size {
+                flush()
+                // 超长段落按句子拆
+                let sentences = para.split(whereSeparator: { $0 == "." || $0 == "。" || $0 == "!" || $0 == "？" || $0 == "\n" })
+                var sub = ""
+                for sentence in sentences {
+                    let piece = String(sentence) + "."
+                    if sub.count + piece.count > size, !sub.isEmpty {
+                        chunks.append(sub)
+                        sub = ""
+                    }
+                    sub += piece
+                }
+                if !sub.isEmpty { chunks.append(sub) }
+                continue
+            }
+
+            if current.count + para.count + 1 > size, !current.isEmpty {
+                flush()
+            }
+            if current.isEmpty {
+                current = para
+            } else {
+                current += "\n" + para
+            }
+        }
+        flush()
+        return chunks
     }
 }
