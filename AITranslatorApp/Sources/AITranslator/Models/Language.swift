@@ -72,7 +72,7 @@ enum TranslationStyle: String, CaseIterable, Identifiable {
     case casual
     case academic
     case code
-    case subtitle
+    case naming
 
     var id: String { rawValue }
 
@@ -83,7 +83,7 @@ enum TranslationStyle: String, CaseIterable, Identifiable {
         case .casual: return "口语化"
         case .academic: return "学术论文"
         case .code: return "代码注释"
-        case .subtitle: return "字幕"
+        case .naming: return "简短命名"
         }
     }
 
@@ -100,8 +100,13 @@ enum TranslationStyle: String, CaseIterable, Identifiable {
             return "Use an academic register: precise, objective, with formal academic vocabulary and hedged claims."
         case .code:
             return "Translate as code comments: concise, imperative, and technical. Keep code identifiers and syntax unchanged."
-        case .subtitle:
-            return "Translate as subtitles: short, punchy, readable at a glance, preserving tone and keeping line length brief."
+        case .naming:
+            return """
+            Translate the text into a concise PascalCase code identifier (no spaces, no underscores), suitable for a file name, folder name, or field name.
+            Drop generic/redundant words (such as 模拟, 模块, 组件, 功能, 系统, 平台, 工具, 管理) when the meaning stays clear — aim for the shortest natural identifier.
+            Output ONLY the identifier, with no quotes, spaces, or explanation.
+            Example: 机器人排名模拟 → RobotRanking.
+            """
         }
     }
 }

@@ -261,6 +261,10 @@ final class AppSettings: ObservableObject {
         didSet { UserDefaults.standard.set(useClipboardOnOpen, forKey: Keys.useClipboardOnOpen) }
     }
 
+    @Published var autoTranslateOnOpen: Bool {
+        didSet { UserDefaults.standard.set(autoTranslateOnOpen, forKey: Keys.autoTranslateOnOpen) }
+    }
+
     @Published var clearOnOpen: Bool {
         didSet { UserDefaults.standard.set(clearOnOpen, forKey: Keys.clearOnOpen) }
     }
@@ -311,6 +315,7 @@ final class AppSettings: ObservableObject {
         static let targetLanguage = "targetLanguage"
         static let hotKey = "hotKey"
         static let useClipboardOnOpen = "useClipboardOnOpen"
+        static let autoTranslateOnOpen = "autoTranslateOnOpen"
         static let clearOnOpen = "clearOnOpen"
         static let autoCopyOnComplete = "autoCopyOnComplete"
         static let smartChineseEnglish = "smartChineseEnglish"
@@ -369,6 +374,12 @@ final class AppSettings: ObservableObject {
             useClipboardOnOpen = true
         } else {
             useClipboardOnOpen = defaults.bool(forKey: Keys.useClipboardOnOpen)
+        }
+
+        if defaults.object(forKey: Keys.autoTranslateOnOpen) == nil {
+            autoTranslateOnOpen = false
+        } else {
+            autoTranslateOnOpen = defaults.bool(forKey: Keys.autoTranslateOnOpen)
         }
 
         if defaults.object(forKey: Keys.clearOnOpen) == nil {

@@ -3,6 +3,7 @@ import SwiftUI
 struct TranslationPopupView: View {
     @ObservedObject var viewModel: TranslationViewModel
     @ObservedObject private var historyStore = HistoryStore.shared
+    @ObservedObject private var settings = AppSettings.shared
     @AppStorage("translationShowHistory") private var showHistory = false
     var onClose: () -> Void
 
@@ -21,7 +22,7 @@ struct TranslationPopupView: View {
 
     private var toolbar: some View {
         HStack(spacing: 10) {
-            if AppSettings.shared.smartChineseEnglish {
+            if settings.smartChineseEnglish {
                 Text("\(viewModel.sourceLanguage.displayName) → \(viewModel.targetLanguage.displayName)")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -52,6 +53,33 @@ struct TranslationPopupView: View {
                 .labelsHidden()
                 .frame(maxWidth: 140)
             }
+
+            // 翻译风格下拉：放在语言选择之后，选择后展示当前风格
+            Menu {
+                ForEach(TranslationStyle.allCases) { style in
+                    Button {
+                        settings.translationStyle = style
+                    } label: {
+                        if settings.translationStyle == style {
+                            Label(style.displayName, systemImage: "checkmark")
+                        } else {
+                            Text(style.displayName)
+                        }
+                    }
+                }
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "textformat")
+                        .font(.caption)
+                    Text(settings.translationStyle.displayName)
+                        .font(.caption)
+                }
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .pointingHand()
+            .help("翻译风格")
 
             Spacer()
 

@@ -86,7 +86,7 @@ final class TTSSpeaker: NSObject {
     }
 }
 
-extension TTSSpeaker: @preconcurrency AVSpeechSynthesizerDelegate {
+extension TTSSpeaker: AVSpeechSynthesizerDelegate {
     func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
         isSpeaking = false
         onFinish?()

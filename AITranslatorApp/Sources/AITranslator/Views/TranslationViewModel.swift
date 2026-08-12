@@ -41,9 +41,46 @@ final class TranslationViewModel: ObservableObject {
            !clip.isEmpty {
             inputText = clip
             statusMessage = "已填入剪贴板"
+            applySmartLanguagesIfNeeded()
+            return
+        }
+
+        // 剪贴板没有文本但有图片 → 截图翻译：OCR 识别后填入
+        if settings.useClipboardOnOpen,
+           OCRService.clipboardImage() != nil {
+            statusMessage = "正在识别图片…"
+            Task { [weak self] in
+                guard let self else { return }
+                await self.recognizeClipboardImage()
+            }
+            return
         }
 
         applySmartLanguagesIfNeeded()
+    }
+
+    /// 识别剪贴板图片中的文字并填入，可自动翻译
+    private func recognizeClipboardImage() async {
+        guard let image = OCRService.clipboardImage(),
+              let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil),
+              let text = await OCRService.recognizeText(in: cgImage) else {
+            statusMessage = "图片中未识别到文字"
+            return
+        }
+
+        // 期间用户可能已手动输入或切换了内容，避免覆盖
+        if !inputText.isEmpty {
+            statusMessage = "已识别图片文字"
+            return
+        }
+
+        inputText = text
+        statusMessage = "已识别图片文字"
+        applySmartLanguagesIfNeeded()
+
+        if settings.autoTranslateOnOpen {
+            await translate()
+        }
     }
 
     func applySmartLanguagesIfNeeded() {
@@ -121,6 +158,8 @@ final class TranslationViewModel: ObservableObject {
 
             guard requestID == id, !Task.isCancelled else { return }
             outputText = result
+            // 翻译完成，聚焦译文框方便直接微调
+            EditorFocusCoordinator.shared.focus(id: "output")
             settings.sourceLanguage = sourceLanguage
             settings.targetLanguage = targetLanguage
 

@@ -235,6 +235,7 @@ struct SettingsView: View {
 
             Toggle("打开时清空上次内容", isOn: $settings.clearOnOpen)
             Toggle("打开时读取剪贴板", isOn: $settings.useClipboardOnOpen)
+            Toggle("识别图片后自动翻译", isOn: $settings.autoTranslateOnOpen)
             Toggle("译完自动复制", isOn: $settings.autoCopyOnComplete)
         }
     }
