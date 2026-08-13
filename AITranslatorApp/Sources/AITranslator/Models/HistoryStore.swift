@@ -37,8 +37,8 @@ final class HistoryStore: ObservableObject {
         let item = HistoryItem(
             source: source,
             target: target,
-            sourceLanguage: sourceLanguage.displayName,
-            targetLanguage: targetLanguage.displayName
+            sourceLanguage: sourceLanguage.rawValue,
+            targetLanguage: targetLanguage.rawValue
         )
         items.insert(item, at: 0)
         if items.count > maxCount {

@@ -4,17 +4,18 @@ import Carbon
 final class HotKeyManager {
     static let shared = HotKeyManager()
 
-    private var hotKeyRef: EventHotKeyRef?
-    private var eventHandler: EventHandlerRef?
-    private var handler: (() -> Void)?
+    static let toggleID: UInt32 = 1
+    static let selectionID: UInt32 = 2
+    static let screenshotID: UInt32 = 3
 
-    private let hotKeyID = EventHotKeyID(signature: OSType(0x41495452), id: 1) // 'AITR'
+    private var refs: [UInt32: EventHotKeyRef] = [:]
+    private var handlers: [UInt32: () -> Void] = [:]
+    private var eventHandler: EventHandlerRef?
 
     private init() {}
 
-    func register(config: HotKeyConfig, handler: @escaping () -> Void) {
+    func register(_ slots: [(id: UInt32, config: HotKeyConfig, handler: () -> Void)]) {
         unregister()
-        self.handler = handler
 
         var eventType = EventTypeSpec(
             eventClass: OSType(kEventClassKeyboard),
@@ -26,7 +27,6 @@ final class HotKeyManager {
             { (_, event, userData) -> OSStatus in
                 guard let userData else { return noErr }
                 let manager = Unmanaged<HotKeyManager>.fromOpaque(userData).takeUnretainedValue()
-
                 var hotKeyID = EventHotKeyID()
                 let err = GetEventParameter(
                     event,
@@ -37,12 +37,9 @@ final class HotKeyManager {
                     nil,
                     &hotKeyID
                 )
-                guard err == noErr, hotKeyID.id == manager.hotKeyID.id else {
-                    return noErr
-                }
-
+                guard err == noErr else { return noErr }
                 DispatchQueue.main.async {
-                    manager.handler?()
+                    manager.handlers[hotKeyID.id]?()
                 }
                 return noErr
             },
@@ -57,30 +54,36 @@ final class HotKeyManager {
             return
         }
 
-        let registerStatus = RegisterEventHotKey(
-            config.keyCode,
-            config.modifiers,
-            hotKeyID,
-            GetApplicationEventTarget(),
-            0,
-            &hotKeyRef
-        )
-
-        if registerStatus != noErr {
-            NSLog("HotKeyManager: RegisterEventHotKey failed: \(registerStatus)")
+        for slot in slots {
+            handlers[slot.id] = slot.handler
+            var ref: EventHotKeyRef?
+            let hotKeyID = EventHotKeyID(signature: OSType(0x41495452), id: slot.id)
+            let registerStatus = RegisterEventHotKey(
+                slot.config.keyCode,
+                slot.config.modifiers,
+                hotKeyID,
+                GetApplicationEventTarget(),
+                0,
+                &ref
+            )
+            if registerStatus != noErr {
+                NSLog("HotKeyManager: RegisterEventHotKey \(slot.id) failed: \(registerStatus)")
+            } else {
+                refs[slot.id] = ref
+            }
         }
     }
 
     func unregister() {
-        if let hotKeyRef {
-            UnregisterEventHotKey(hotKeyRef)
-            self.hotKeyRef = nil
+        for ref in refs.values {
+            UnregisterEventHotKey(ref)
         }
+        refs.removeAll()
+        handlers.removeAll()
         if let eventHandler {
             RemoveEventHandler(eventHandler)
             self.eventHandler = nil
         }
-        handler = nil
     }
 
     deinit {

@@ -5,13 +5,18 @@ struct TranslationPopupView: View {
     @ObservedObject private var historyStore = HistoryStore.shared
     @ObservedObject private var settings = AppSettings.shared
     @AppStorage("translationShowHistory") private var showHistory = false
+    @State private var historyQuery = ""
     var onClose: () -> Void
 
     var body: some View {
         VStack(spacing: 0) {
             toolbar
             Divider()
-            content
+            if settings.needsAPIKey {
+                setupPane
+            } else {
+                content
+            }
             Divider()
             footer
         }
@@ -22,39 +27,8 @@ struct TranslationPopupView: View {
 
     private var toolbar: some View {
         HStack(spacing: 10) {
-            if settings.smartChineseEnglish {
-                Text("\(viewModel.sourceLanguage.displayName) → \(viewModel.targetLanguage.displayName)")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .help("中英智能互翻")
-            } else {
-                Picker("源语言", selection: $viewModel.sourceLanguage) {
-                    ForEach(TranslateLanguage.sourceOptions) { lang in
-                        Text(lang.displayName).tag(lang)
-                    }
-                }
-                .labelsHidden()
-                .frame(maxWidth: 140)
+            languageControls
 
-                Button {
-                    viewModel.swapLanguages()
-                } label: {
-                    Image(systemName: "arrow.left.arrow.right")
-                }
-                .buttonStyle(.borderless)
-                .pointingHand()
-                .help("交换语言")
-
-                Picker("目标语言", selection: $viewModel.targetLanguage) {
-                    ForEach(TranslateLanguage.targetOptions) { lang in
-                        Text(lang.displayName).tag(lang)
-                    }
-                }
-                .labelsHidden()
-                .frame(maxWidth: 140)
-            }
-
-            // 翻译风格下拉：放在语言选择之后，选择后展示当前风格
             Menu {
                 ForEach(TranslationStyle.allCases) { style in
                     Button {
@@ -97,21 +71,117 @@ struct TranslationPopupView: View {
             Button {
                 SettingsWindowController.shared.show()
             } label: {
-                Label("设置", systemImage: "gearshape")
+                Image(systemName: "gearshape")
             }
             .buttonStyle(.borderless)
             .pointingHand()
             .help("设置")
 
-            Button("翻译") {
-                Task { await viewModel.translate() }
+            if viewModel.isTranslating {
+                Button("取消") {
+                    viewModel.cancelTranslating()
+                }
+                .pointingHand()
+                .help("取消当前翻译")
+            } else {
+                Button("翻译") {
+                    Task { await viewModel.translate() }
+                }
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.return, modifiers: .command)
+                .disabled(viewModel.inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .pointingHand()
             }
-            .keyboardShortcut(.return, modifiers: .command)
-            .disabled(viewModel.isTranslating || viewModel.inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            .pointingHand()
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
+    }
+
+    @ViewBuilder
+    private var languageControls: some View {
+        if settings.smartChineseEnglish && !viewModel.smartOverride {
+            Button {
+                viewModel.smartOverride = true
+            } label: {
+                HStack(spacing: 4) {
+                    Text("\(viewModel.sourceLanguage.displayName) → \(viewModel.targetLanguage.displayName)")
+                    Image(systemName: "chevron.down")
+                        .font(.caption2)
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .pointingHand()
+            .help("点击后可改语言")
+        } else {
+            Picker("源语言", selection: $viewModel.sourceLanguage) {
+                ForEach(TranslateLanguage.sourceOptions) { lang in
+                    Text(lang.displayName).tag(lang)
+                }
+            }
+            .labelsHidden()
+            .frame(maxWidth: 140)
+            .onChange(of: viewModel.sourceLanguage) { _, _ in
+                viewModel.smartOverride = true
+            }
+
+            Button {
+                viewModel.swapLanguages()
+            } label: {
+                Image(systemName: "arrow.left.arrow.right")
+            }
+            .buttonStyle(.borderless)
+            .pointingHand()
+            .help("交换语言")
+
+            Picker("目标语言", selection: $viewModel.targetLanguage) {
+                ForEach(TranslateLanguage.targetOptions) { lang in
+                    Text(lang.displayName).tag(lang)
+                }
+            }
+            .labelsHidden()
+            .frame(maxWidth: 140)
+            .onChange(of: viewModel.targetLanguage) { _, _ in
+                viewModel.smartOverride = true
+            }
+        }
+    }
+
+    private var setupPane: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("填写 API Key 开始使用")
+                .font(.headline)
+            Text("Key 只存在钥匙串，不会明文落盘。Ollama 本地可直接在设置里切换，无需 Key。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            Picker("服务商", selection: $settings.providerPreset) {
+                ForEach(ProviderPreset.allCases) { preset in
+                    Text(preset.displayName).tag(preset)
+                }
+            }
+            .pickerStyle(.menu)
+            .onChange(of: settings.providerPreset) { _, newValue in
+                if newValue != .custom {
+                    settings.apiBaseURL = newValue.baseURL
+                    settings.model = newValue.defaultModel
+                }
+            }
+
+            SecureField("sk-…", text: $settings.apiKey)
+                .textFieldStyle(.roundedBorder)
+
+            HStack {
+                Button("打开完整设置") {
+                    SettingsWindowController.shared.show()
+                }
+                Spacer()
+            }
+            Spacer()
+        }
+        .padding(24)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     private var content: some View {
@@ -122,26 +192,11 @@ struct TranslationPopupView: View {
             }
 
             HSplitView {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("原文")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    AutohidingTextEditor(
-                        text: $viewModel.inputText,
-                        fontSize: CGFloat(AppSettings.shared.editorFontSize),
-                        focusID: "input",
-                        onEnter: { Task { await viewModel.translate() } },
-                        onTab: { EditorFocusCoordinator.shared.focus(id: "output") }
-                    )
-                    .padding(4)
-                    .background(Color(nsColor: .textBackgroundColor))
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(Color.secondary.opacity(0.2))
-                    )
-                }
-                .padding(12)
+                editorColumn(title: "原文", text: $viewModel.inputText, focusID: "input", onEnter: {
+                    Task { await viewModel.translate() }
+                }, onTab: {
+                    EditorFocusCoordinator.shared.focus(id: "output")
+                })
 
                 VStack(alignment: .leading, spacing: 6) {
                     HStack(spacing: 6) {
@@ -170,7 +225,7 @@ struct TranslationPopupView: View {
                     AutohidingTextEditor(
                         text: $viewModel.outputText,
                         isEditable: true,
-                        fontSize: CGFloat(AppSettings.shared.editorFontSize),
+                        fontSize: CGFloat(settings.editorFontSize),
                         focusID: "output",
                         onTab: { EditorFocusCoordinator.shared.focus(id: "input") }
                     )
@@ -187,7 +242,44 @@ struct TranslationPopupView: View {
         }
     }
 
-    /// 折叠的翻译历史侧边栏
+    private func editorColumn(
+        title: String,
+        text: Binding<String>,
+        focusID: String,
+        onEnter: (() -> Void)?,
+        onTab: @escaping () -> Void
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            AutohidingTextEditor(
+                text: text,
+                fontSize: CGFloat(settings.editorFontSize),
+                focusID: focusID,
+                onEnter: onEnter,
+                onTab: onTab
+            )
+            .padding(4)
+            .background(Color(nsColor: .textBackgroundColor))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(Color.secondary.opacity(0.2))
+            )
+        }
+        .padding(12)
+    }
+
+    private var filteredHistory: [HistoryItem] {
+        let q = historyQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        if q.isEmpty { return historyStore.items }
+        return historyStore.items.filter {
+            $0.source.localizedCaseInsensitiveContains(q)
+                || $0.target.localizedCaseInsensitiveContains(q)
+        }
+    }
+
     private var historySidebar: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
@@ -209,9 +301,13 @@ struct TranslationPopupView: View {
             }
             .padding(.horizontal, 4)
 
-            if historyStore.items.isEmpty {
+            TextField("搜索", text: $historyQuery)
+                .textFieldStyle(.roundedBorder)
+                .font(.caption)
+
+            if filteredHistory.isEmpty {
                 Spacer()
-                Text("暂无历史记录")
+                Text(historyStore.items.isEmpty ? "暂无历史记录" : "无匹配结果")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity)
@@ -219,9 +315,8 @@ struct TranslationPopupView: View {
             } else {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 6) {
-                        ForEach(historyStore.items) { item in
+                        ForEach(filteredHistory) { item in
                             Button {
-                                // ⌥ 点击：回填并立即重新翻译；普通点击：仅回填
                                 if NSEvent.modifierFlags.contains(.option) {
                                     TranslationPanelController.shared.restoreFromHistoryAndTranslate(item)
                                 } else {
@@ -282,7 +377,8 @@ struct TranslationPopupView: View {
                     Label(error, systemImage: "exclamationmark.triangle.fill")
                         .foregroundStyle(.red)
                         .font(.caption)
-                        .lineLimit(1)
+                        .lineLimit(2)
+                        .help(error)
                 } else if viewModel.isTranslating {
                     HStack(spacing: 6) {
                         ProgressView()
@@ -298,18 +394,18 @@ struct TranslationPopupView: View {
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 } else {
-                    Text(" ")
+                    Text("\(viewModel.inputText.count) → \(viewModel.outputText.count) 字")
                         .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            if viewModel.isTranslating {
-                Button("取消") {
-                    viewModel.cancelTranslating()
+            if viewModel.errorMessage != nil {
+                Button("重试") {
+                    Task { await viewModel.translate() }
                 }
                 .pointingHand()
-                .help("取消当前翻译")
             }
 
             Button("清空") {

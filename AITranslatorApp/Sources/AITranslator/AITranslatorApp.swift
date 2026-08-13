@@ -15,6 +15,10 @@ struct AITranslatorApp: App {
                 TranslationPanelController.shared.translateSelection()
             }
 
+            Button("截图翻译") {
+                TranslationPanelController.shared.translateScreenshot()
+            }
+
             Divider()
 
             Button("设置…") {
@@ -50,9 +54,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-            TranslationPanelController.shared.show()
+        // 仅首次（无 API Key）弹出引导；之后只留菜单栏
+        if AppSettings.shared.needsAPIKey {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                TranslationPanelController.shared.show()
+            }
         }
+
+        #if DEBUG
+        DeepSeekTranslator.selfCheck()
+        #endif
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -63,9 +74,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func registerHotKey() {
-        let config = AppSettings.shared.hotKey
-        HotKeyManager.shared.register(config: config) {
-            TranslationPanelController.shared.toggle()
-        }
+        let settings = AppSettings.shared
+        HotKeyManager.shared.register([
+            (HotKeyManager.toggleID, settings.hotKey, {
+                TranslationPanelController.shared.toggle()
+            }),
+            (HotKeyManager.selectionID, settings.selectionHotKey, {
+                TranslationPanelController.shared.translateSelection()
+            }),
+            (HotKeyManager.screenshotID, settings.screenshotHotKey, {
+                TranslationPanelController.shared.translateScreenshot()
+            }),
+        ])
     }
 }

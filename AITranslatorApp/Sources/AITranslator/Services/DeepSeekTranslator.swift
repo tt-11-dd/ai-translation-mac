@@ -72,7 +72,9 @@ struct DeepSeekTranslator {
         guard !trimmed.isEmpty else { throw TranslationError.emptyText }
 
         let apiKey = settings.apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !apiKey.isEmpty else { throw TranslationError.missingAPIKey }
+        if apiKey.isEmpty, settings.providerPreset != .ollama {
+            throw TranslationError.missingAPIKey
+        }
 
         let base = settings.apiBaseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         guard let url = URL(string: "\(base)/chat/completions") else {
@@ -147,7 +149,9 @@ struct DeepSeekTranslator {
         request.httpMethod = "POST"
         request.timeoutInterval = 120
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        if !apiKey.isEmpty {
+            request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        }
         request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
@@ -255,10 +259,9 @@ struct DeepSeekTranslator {
             if para.count > size {
                 flush()
                 // 超长段落按句子拆
-                let sentences = para.split(whereSeparator: { $0 == "." || $0 == "。" || $0 == "!" || $0 == "？" || $0 == "\n" })
+                let sentences = Self.splitKeepingDelimiters(para)
                 var sub = ""
-                for sentence in sentences {
-                    let piece = String(sentence) + "."
+                for piece in sentences {
                     if sub.count + piece.count > size, !sub.isEmpty {
                         chunks.append(sub)
                         sub = ""
@@ -281,4 +284,30 @@ struct DeepSeekTranslator {
         flush()
         return chunks
     }
+
+    /// 按句号等切分，保留原分隔符（避免中文。被补成英文.）
+    static func splitKeepingDelimiters(_ text: String) -> [String] {
+        var parts: [String] = []
+        var current = ""
+        let marks = Set("。！？.!?\n")
+        for ch in text {
+            current.append(ch)
+            if marks.contains(ch) {
+                parts.append(current)
+                current = ""
+            }
+        }
+        if !current.isEmpty { parts.append(current) }
+        return parts
+    }
+
+    #if DEBUG
+    static func selfCheck() {
+        let parts = splitIntoChunks("你好。世界。测试", threshold: 2, size: 6)
+        precondition(parts.allSatisfy { !$0.hasSuffix("..") }, "chunk must not append extra period")
+        precondition(parts.contains(where: { $0.contains("。") }), "must keep Chinese period")
+        let packed = splitKeepingDelimiters("甲。乙！丙")
+        precondition(packed == ["甲。", "乙！", "丙"], "keep original delimiters")
+    }
+    #endif
 }

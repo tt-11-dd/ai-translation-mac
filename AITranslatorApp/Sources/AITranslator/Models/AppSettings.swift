@@ -16,6 +16,18 @@ struct HotKeyConfig: Codable, Equatable {
         label: "T"
     )
 
+    static let defaultSelection = HotKeyConfig(
+        keyCode: UInt32(kVK_ANSI_E),
+        modifiers: UInt32(cmdKey | shiftKey),
+        label: "E"
+    )
+
+    static let defaultScreenshot = HotKeyConfig(
+        keyCode: UInt32(kVK_ANSI_O),
+        modifiers: UInt32(cmdKey | shiftKey),
+        label: "O"
+    )
+
     var displayString: String {
         var parts: [String] = []
         if modifiers & UInt32(controlKey) != 0 { parts.append("⌃") }
@@ -250,11 +262,15 @@ final class AppSettings: ObservableObject {
     }
 
     @Published var hotKey: HotKeyConfig {
-        didSet {
-            if let data = try? JSONEncoder().encode(hotKey) {
-                UserDefaults.standard.set(data, forKey: Keys.hotKey)
-            }
-        }
+        didSet { Self.persistHotKey(hotKey, key: Keys.hotKey) }
+    }
+
+    @Published var selectionHotKey: HotKeyConfig {
+        didSet { Self.persistHotKey(selectionHotKey, key: Keys.selectionHotKey) }
+    }
+
+    @Published var screenshotHotKey: HotKeyConfig {
+        didSet { Self.persistHotKey(screenshotHotKey, key: Keys.screenshotHotKey) }
     }
 
     @Published var useClipboardOnOpen: Bool {
@@ -314,6 +330,8 @@ final class AppSettings: ObservableObject {
         static let sourceLanguage = "sourceLanguage"
         static let targetLanguage = "targetLanguage"
         static let hotKey = "hotKey"
+        static let selectionHotKey = "selectionHotKey"
+        static let screenshotHotKey = "screenshotHotKey"
         static let useClipboardOnOpen = "useClipboardOnOpen"
         static let autoTranslateOnOpen = "autoTranslateOnOpen"
         static let clearOnOpen = "clearOnOpen"
@@ -339,7 +357,17 @@ final class AppSettings: ObservableObject {
         }
         apiKey = storedAPIKey
 
-        apiBaseURL = defaults.string(forKey: Keys.apiBaseURL) ?? ProviderPreset.deepseek.baseURL
+        let rawBase = defaults.string(forKey: Keys.apiBaseURL) ?? ProviderPreset.deepseek.baseURL
+        var loadedBaseURL = rawBase
+        if loadedBaseURL == "https://api.moonshot.cn" {
+            loadedBaseURL = ProviderPreset.moonshot.baseURL
+        } else if loadedBaseURL == "http://127.0.0.1:11434" {
+            loadedBaseURL = ProviderPreset.ollama.baseURL
+        }
+        apiBaseURL = loadedBaseURL
+        if loadedBaseURL != rawBase {
+            defaults.set(loadedBaseURL, forKey: Keys.apiBaseURL)
+        }
         model = defaults.string(forKey: Keys.model) ?? ProviderPreset.deepseek.defaultModel
 
         if let raw = defaults.string(forKey: Keys.providerPreset),
@@ -363,12 +391,9 @@ final class AppSettings: ObservableObject {
             targetLanguage = .chinese
         }
 
-        if let data = defaults.data(forKey: Keys.hotKey),
-           let decoded = try? JSONDecoder().decode(HotKeyConfig.self, from: data) {
-            hotKey = decoded
-        } else {
-            hotKey = .default
-        }
+        hotKey = Self.loadHotKey(from: defaults, key: Keys.hotKey, fallback: .default)
+        selectionHotKey = Self.loadHotKey(from: defaults, key: Keys.selectionHotKey, fallback: .defaultSelection)
+        screenshotHotKey = Self.loadHotKey(from: defaults, key: Keys.screenshotHotKey, fallback: .defaultScreenshot)
 
         if defaults.object(forKey: Keys.useClipboardOnOpen) == nil {
             useClipboardOnOpen = true
@@ -424,7 +449,27 @@ final class AppSettings: ObservableObject {
         launchAtLoginError = nil
     }
 
+    /// Ollama 本地无需 Key；其余服务商未填 Key 时走首次引导
+    var needsAPIKey: Bool {
+        providerPreset != .ollama
+            && apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     func refreshLaunchAtLoginStatus() {
         launchAtLogin = LaunchAtLoginHelper.isEnabled
+    }
+
+    private static func persistHotKey(_ config: HotKeyConfig, key: String) {
+        if let data = try? JSONEncoder().encode(config) {
+            UserDefaults.standard.set(data, forKey: key)
+        }
+    }
+
+    private static func loadHotKey(from defaults: UserDefaults, key: String, fallback: HotKeyConfig) -> HotKeyConfig {
+        guard let data = defaults.data(forKey: key),
+              let decoded = try? JSONDecoder().decode(HotKeyConfig.self, from: data) else {
+            return fallback
+        }
+        return decoded
     }
 }

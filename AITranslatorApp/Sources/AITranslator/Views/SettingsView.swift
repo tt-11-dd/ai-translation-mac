@@ -7,67 +7,50 @@ struct SettingsView: View {
 
     @ObservedObject private var settings = AppSettings.shared
     @ObservedObject private var usageStore = UsageStore.shared
-    @State private var isRecordingHotKey = false
+    @State private var recordingField: HotKeyField?
     @State private var showAPIKey = false
     @State private var localMonitor: Any?
     @State private var globalMonitor: Any?
     @State private var newGlossarySource = ""
     @State private var newGlossaryTarget = ""
+    @State private var axTrusted = AccessibilityHelper.isTrusted
+
+    private enum HotKeyField {
+        case toggle, selection, screenshot
+    }
 
     var body: some View {
         VStack(spacing: 0) {
             header
             Divider()
-            content
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    serviceBlock
+                    hotkeyBlock
+                    translateBlock
+                    glossaryBlock
+                    generalBlock
+                    usageBlock
+                }
+                .padding(16)
+            }
             Divider()
             footer
         }
-        .frame(width: 860)
+        .frame(width: 520, height: 640)
         .background(Color(nsColor: .windowBackgroundColor))
-        .onAppear { settings.refreshLaunchAtLoginStatus() }
+        .onAppear {
+            settings.refreshLaunchAtLoginStatus()
+            axTrusted = AccessibilityHelper.isTrusted
+        }
         .onDisappear { stopRecording() }
         .onExitCommand {
-            if isRecordingHotKey {
+            if recordingField != nil {
                 stopRecording()
             } else {
                 onClose?()
             }
         }
-    }
-
-    /// 左中右三栏布局
-    private var content: some View {
-        HStack(alignment: .top, spacing: 14) {
-            leftColumn
-            middleColumn
-            rightColumn
-        }
-        .padding(16)
-    }
-
-    /// 左栏：翻译服务
-    private var leftColumn: some View {
-        serviceBlock
-            .frame(maxWidth: .infinity)
-    }
-
-    /// 中栏：快捷键 + 翻译偏好
-    private var middleColumn: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            hotkeyBlock
-            translateBlock
-        }
-        .frame(maxWidth: .infinity)
-    }
-
-    /// 右栏：术语表 + 通用 + 用量
-    private var rightColumn: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            glossaryBlock
-            generalBlock
-            usageBlock
-        }
-        .frame(maxWidth: .infinity)
     }
 
     private var header: some View {
@@ -90,7 +73,7 @@ struct SettingsView: View {
 
     private var footer: some View {
         HStack {
-            Text("当前快捷键：\(settings.hotKey.displayString)")
+            Text("唤起 \(settings.hotKey.displayString)  ·  选中 \(settings.selectionHotKey.displayString)  ·  截图 \(settings.screenshotHotKey.displayString)")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
@@ -142,7 +125,7 @@ struct SettingsView: View {
                 }
             }
 
-            if settings.apiKey.isEmpty {
+            if settings.needsAPIKey {
                 Label("未配置 API Key，翻译前请先填写", systemImage: "exclamationmark.triangle.fill")
                     .font(.caption)
                     .foregroundStyle(.orange)
@@ -161,42 +144,51 @@ struct SettingsView: View {
     }
 
     private var hotkeyBlock: some View {
-        section("唤起快捷键", tip: "支持单键或组合键，也可录制键盘自定义键") {
-            HStack(spacing: 10) {
-                Text(settings.hotKey.displayString)
-                    .font(.system(size: 20, weight: .semibold, design: .rounded))
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 10)
-                    .frame(maxWidth: .infinity)
-                    .background(
-                        RoundedRectangle(cornerRadius: 10)
-                            .fill(isRecordingHotKey
-                                  ? Color.accentColor.opacity(0.18)
-                                  : Color(nsColor: .controlBackgroundColor))
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10)
-                            .stroke(isRecordingHotKey ? Color.accentColor.opacity(0.5) : Color.secondary.opacity(0.18))
-                    )
+        section("快捷键", tip: "录制时先关掉已注册热键，避免按了没反应") {
+            hotKeyRow("唤起窗口", config: settings.hotKey, field: .toggle, fallback: .default)
+            hotKeyRow("翻译选中", config: settings.selectionHotKey, field: .selection, fallback: .defaultSelection)
+            hotKeyRow("截图翻译", config: settings.screenshotHotKey, field: .screenshot, fallback: .defaultScreenshot)
 
-                Button(isRecordingHotKey ? "按下…" : "录制") {
-                    if isRecordingHotKey { stopRecording() } else { startRecording() }
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(isRecordingHotKey ? .red : .accentColor)
-
-                Button("重置") {
-                    settings.hotKey = .default
-                    NotificationCenter.default.post(name: .hotKeyDidChange, object: nil)
-                }
-                .buttonStyle(.bordered)
-            }
-
-            Text(isRecordingHotKey
+            Text(recordingField != nil
                  ? "请按下任意键或组合键，Esc 取消"
-                 : "例如 F8、⌘⇧T、⌥Space，或你键盘上的自定义键")
+                 : "例如 F8、⌘⇧T、⌥Space")
                 .font(.caption)
-                .foregroundStyle(isRecordingHotKey ? .red : .secondary)
+                .foregroundStyle(recordingField != nil ? .red : .secondary)
+        }
+    }
+
+    private func hotKeyRow(_ title: String, config: HotKeyConfig, field: HotKeyField, fallback: HotKeyConfig) -> some View {
+        HStack(spacing: 8) {
+            Text(title)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(width: 64, alignment: .leading)
+            Text(config.displayString)
+                .font(.system(size: 15, weight: .semibold, design: .rounded))
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .frame(maxWidth: .infinity)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(recordingField == field
+                              ? Color.accentColor.opacity(0.18)
+                              : Color(nsColor: .controlBackgroundColor))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(recordingField == field ? Color.accentColor.opacity(0.5) : Color.secondary.opacity(0.18))
+                )
+            Button(recordingField == field ? "按下…" : "录制") {
+                if recordingField == field { stopRecording() } else { startRecording(field) }
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(recordingField == field ? .red : .accentColor)
+            .controlSize(.small)
+            Button("重置") {
+                applyHotKey(fallback, to: field)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
         }
     }
 
@@ -205,7 +197,7 @@ struct SettingsView: View {
             Toggle(isOn: $settings.smartChineseEnglish) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("中英智能互翻")
-                    Text("中文→英文，英文→中文")
+                    Text("中文→英文，英文→中文；窗口内可点语言临时改")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -241,21 +233,22 @@ struct SettingsView: View {
     }
 
     private var glossaryBlock: some View {
-        section("术语表", tip: "指定术语的强制译法，翻译时生效") {
+        section("术语表", tip: "指定术语的强制译法，可直接改") {
             if settings.glossary.isEmpty {
                 Text("暂无术语。添加后翻译时会优先使用你指定的译法。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } else {
-                ForEach(settings.glossary) { entry in
+                ForEach($settings.glossary) { $entry in
                     HStack(spacing: 8) {
-                        Text(entry.source)
+                        TextField("原文", text: $entry.source)
+                            .textFieldStyle(.roundedBorder)
                             .font(.system(.body, design: .monospaced))
                         Text("→")
                             .foregroundStyle(.secondary)
-                        Text(entry.target)
+                        TextField("译法", text: $entry.target)
+                            .textFieldStyle(.roundedBorder)
                             .font(.system(.body, design: .monospaced))
-                        Spacer()
                         Button {
                             settings.glossary.removeAll { $0.id == entry.id }
                         } label: {
@@ -264,7 +257,6 @@ struct SettingsView: View {
                         }
                         .buttonStyle(.borderless)
                     }
-                    .padding(.vertical, 2)
                 }
             }
 
@@ -326,12 +318,39 @@ struct SettingsView: View {
     }
 
     private var generalBlock: some View {
-        section("通用", tip: "系统启动项") {
+        section("通用", tip: "启动、权限与显示") {
             Toggle("登录时启动", isOn: $settings.launchAtLogin)
             if let error = settings.launchAtLoginError {
                 Text(error)
                     .font(.caption)
                     .foregroundStyle(.red)
+            }
+
+            HStack {
+                Text("编辑器字号 \(Int(settings.editorFontSize)) pt")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Slider(value: $settings.editorFontSize, in: 12...22, step: 1)
+            }
+
+            Divider().padding(.vertical, 2)
+
+            if axTrusted {
+                Label("已授权辅助功能（翻译选中文本）", systemImage: "checkmark.circle")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                HStack {
+                    Label("翻译选中文本需要辅助功能权限", systemImage: "exclamationmark.triangle")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                    Spacer()
+                    Button("去授权") {
+                        AccessibilityHelper.requestTrust()
+                        AccessibilityHelper.openSettings()
+                    }
+                    .controlSize(.small)
+                }
             }
         }
     }
@@ -379,14 +398,23 @@ struct SettingsView: View {
 
     // MARK: - Hotkey recording
 
-    private func startRecording() {
+    private func applyHotKey(_ config: HotKeyConfig, to field: HotKeyField) {
+        switch field {
+        case .toggle: settings.hotKey = config
+        case .selection: settings.selectionHotKey = config
+        case .screenshot: settings.screenshotHotKey = config
+        }
+        NotificationCenter.default.post(name: .hotKeyDidChange, object: nil)
+    }
+
+    private func startRecording(_ field: HotKeyField) {
         stopRecording()
-        isRecordingHotKey = true
+        recordingField = field
+        HotKeyManager.shared.unregister()
 
         let applyConfig: (HotKeyConfig) -> Void = { config in
             DispatchQueue.main.async {
-                settings.hotKey = config
-                NotificationCenter.default.post(name: .hotKeyDidChange, object: nil)
+                applyHotKey(config, to: field)
                 stopRecording()
             }
         }
@@ -410,7 +438,7 @@ struct SettingsView: View {
     }
 
     private func stopRecording() {
-        isRecordingHotKey = false
+        recordingField = nil
         if let localMonitor {
             NSEvent.removeMonitor(localMonitor)
             self.localMonitor = nil
@@ -419,6 +447,7 @@ struct SettingsView: View {
             NSEvent.removeMonitor(globalMonitor)
             self.globalMonitor = nil
         }
+        NotificationCenter.default.post(name: .hotKeyDidChange, object: nil)
     }
 }
 

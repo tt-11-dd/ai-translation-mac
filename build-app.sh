@@ -45,6 +45,8 @@ cat > "${APP_PATH}/Contents/Info.plist" <<EOF
   <true/>
   <key>NSHighResolutionCapable</key>
   <true/>
+  <key>NSScreenCaptureUsageDescription</key>
+  <string>截图翻译需要选取屏幕区域以识别文字。</string>
   <key>NSPrincipalClass</key>
   <string>NSApplication</string>
 </dict>

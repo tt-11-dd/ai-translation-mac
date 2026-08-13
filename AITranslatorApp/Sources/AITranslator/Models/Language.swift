@@ -63,6 +63,12 @@ enum TranslateLanguage: String, CaseIterable, Identifiable, Codable {
     static var targetOptions: [TranslateLanguage] {
         allCases.filter { $0 != .auto }
     }
+
+    /// 兼容历史记录里旧的 displayName 和新的 rawValue
+    static func fromStored(_ value: String) -> TranslateLanguage? {
+        if let lang = TranslateLanguage(rawValue: value) { return lang }
+        return allCases.first { $0.displayName == value }
+    }
 }
 
 /// 翻译风格：影响译文的语气与用词
@@ -132,8 +138,8 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
     var baseURL: String {
         switch self {
         case .deepseek: return "https://api.deepseek.com"
-        case .moonshot: return "https://api.moonshot.cn"
-        case .ollama: return "http://127.0.0.1:11434"
+        case .moonshot: return "https://api.moonshot.cn/v1"
+        case .ollama: return "http://127.0.0.1:11434/v1"
         case .custom: return ""
         }
     }

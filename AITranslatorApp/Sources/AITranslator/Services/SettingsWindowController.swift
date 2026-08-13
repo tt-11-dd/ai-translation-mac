@@ -23,21 +23,6 @@ final class SettingsWindowController: NSObject {
         window.center()
         window.makeKeyAndOrderFront(nil)
         window.orderFrontRegardless()
-
-        // 显示后按内容自适应高度，避免上下留白
-        DispatchQueue.main.async { [weak self] in
-            guard let self, let window = self.window,
-                  let hosting = window.contentView as? NSHostingView<SettingsView> else { return }
-            let fitting = hosting.fittingSize
-            guard fitting.height > 0 else { return }
-            let newSize = NSSize(width: 860, height: fitting.height)
-            if abs(window.frame.height - newSize.height) > 2 {
-                var frame = window.frame
-                frame.origin.y += frame.height - newSize.height
-                frame.size = newSize
-                window.setFrame(frame, display: true)
-            }
-        }
     }
 
     func hide() {
@@ -53,9 +38,7 @@ final class SettingsWindowController: NSObject {
             SettingsWindowController.shared.hide()
         }
         let hosting = NSHostingView(rootView: content)
-        // 宽度固定，高度跟随内容自适应（不写死，避免上下留白）
-        let contentSize = hosting.fittingSize
-        hosting.frame = NSRect(x: 0, y: 0, width: 860, height: max(contentSize.height, 480))
+        hosting.frame = NSRect(x: 0, y: 0, width: 520, height: 640)
 
         let window = NSWindow(
             contentRect: hosting.frame,

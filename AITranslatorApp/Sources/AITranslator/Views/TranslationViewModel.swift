@@ -11,11 +11,15 @@ final class TranslationViewModel: ObservableObject {
     @Published var errorMessage: String?
     @Published var statusMessage: String?
     @Published var isSpeaking = false
+    /// 智能互翻下用户手动改了语言，本次不再自动覆盖
+    @Published var smartOverride = false
 
     private let translator = DeepSeekTranslator.makeDefault()
     private let settings = AppSettings.shared
     private var translateTask: Task<Void, Never>?
     private var requestID = UUID()
+    /// 上次填入或译出的文本，用于避免剪贴板把译文再翻回去
+    private var lastClipboardFingerprint = ""
 
     init() {
         sourceLanguage = AppSettings.shared.sourceLanguage
@@ -27,6 +31,7 @@ final class TranslationViewModel: ObservableObject {
         targetLanguage = settings.targetLanguage
         errorMessage = nil
         statusMessage = nil
+        smartOverride = false
 
         if settings.clearOnOpen {
             translateTask?.cancel()
@@ -39,7 +44,12 @@ final class TranslationViewModel: ObservableObject {
            let clip = NSPasteboard.general.string(forType: .string)?
             .trimmingCharacters(in: .whitespacesAndNewlines),
            !clip.isEmpty {
+            if clip == lastClipboardFingerprint {
+                applySmartLanguagesIfNeeded()
+                return
+            }
             inputText = clip
+            lastClipboardFingerprint = clip
             statusMessage = "已填入剪贴板"
             applySmartLanguagesIfNeeded()
             return
@@ -60,7 +70,7 @@ final class TranslationViewModel: ObservableObject {
     }
 
     /// 识别剪贴板图片中的文字并填入，可自动翻译
-    private func recognizeClipboardImage() async {
+    func recognizeClipboardImage(forceTranslate: Bool = false) async {
         guard let image = OCRService.clipboardImage(),
               let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil),
               let text = await OCRService.recognizeText(in: cgImage) else {
@@ -78,13 +88,23 @@ final class TranslationViewModel: ObservableObject {
         statusMessage = "已识别图片文字"
         applySmartLanguagesIfNeeded()
 
-        if settings.autoTranslateOnOpen {
+        if settings.autoTranslateOnOpen || forceTranslate {
             await translate()
         }
     }
 
+    /// 截图翻译：忽略「打开时不清空」之类的保护，直接 OCR 并翻译
+    func ocrClipboardAndTranslate() async {
+        translateTask?.cancel()
+        inputText = ""
+        outputText = ""
+        errorMessage = nil
+        isTranslating = false
+        await recognizeClipboardImage(forceTranslate: true)
+    }
+
     func applySmartLanguagesIfNeeded() {
-        guard settings.smartChineseEnglish else { return }
+        guard settings.smartChineseEnglish, !smartOverride else { return }
         let trimmed = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         let pair = LanguageDetector.resolveChineseEnglish(for: trimmed)
@@ -93,6 +113,7 @@ final class TranslationViewModel: ObservableObject {
     }
 
     func swapLanguages() {
+        smartOverride = true
         if sourceLanguage == .auto {
             // 自动检测时没有明确的源语言，反向推导：把当前目标语作为新的源语言
             let newSource = targetLanguage
@@ -177,6 +198,7 @@ final class TranslationViewModel: ObservableObject {
             if settings.autoCopyOnComplete {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(result, forType: .string)
+                lastClipboardFingerprint = result
                 statusMessage = "翻译完成，已复制"
             } else {
                 statusMessage = "翻译完成"
@@ -198,6 +220,7 @@ final class TranslationViewModel: ObservableObject {
         guard !outputText.isEmpty else { return }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(outputText, forType: .string)
+        lastClipboardFingerprint = outputText
         statusMessage = "已复制到剪贴板"
     }
 
@@ -237,6 +260,14 @@ final class TranslationViewModel: ObservableObject {
         translateTask?.cancel()
         inputText = item.source
         outputText = item.target
+        lastClipboardFingerprint = item.target
+        if let src = TranslateLanguage.fromStored(item.sourceLanguage) {
+            sourceLanguage = src
+        }
+        if let tgt = TranslateLanguage.fromStored(item.targetLanguage) {
+            targetLanguage = tgt
+        }
+        smartOverride = true
         errorMessage = nil
         statusMessage = "已从历史回填"
         isTranslating = false
@@ -249,7 +280,13 @@ final class TranslationViewModel: ObservableObject {
         outputText = ""
         errorMessage = nil
         isTranslating = false
-        applySmartLanguagesIfNeeded()
+        if let src = TranslateLanguage.fromStored(item.sourceLanguage) {
+            sourceLanguage = src
+        }
+        if let tgt = TranslateLanguage.fromStored(item.targetLanguage) {
+            targetLanguage = tgt
+        }
+        smartOverride = true
         Task { await translate() }
     }
 

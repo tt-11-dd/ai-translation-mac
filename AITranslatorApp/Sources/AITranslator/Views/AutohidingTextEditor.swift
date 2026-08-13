@@ -4,7 +4,7 @@ import SwiftUI
 /// 双击全选的 NSTextView：双击任意位置选中整段文本（翻译场景比「选词」更实用）
 final class SelectAllOnDoubleClickTextView: NSTextView {
     override func mouseDown(with event: NSEvent) {
-        if event.clickCount >= 2 {
+        if event.clickCount >= 3 {
             let fullRange = NSRange(location: 0, length: (string as NSString).length)
             setSelectedRange(fullRange)
             return
