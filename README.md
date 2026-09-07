@@ -59,9 +59,11 @@ API Key 保存在 macOS **钥匙串（Keychain）**，不会明文落盘。
 /Users/code-tools/ai-translation-mac/build-app.sh
 ```
 
-生成：`~/Desktop/AI翻译.app` 与 `dist/AI翻译.app`
+生成：`~/Desktop/AI翻译.app`、`dist/AI翻译.app`、`dist/AI-Translator-macOS.zip`
 
-若提示无法打开：右键 → 打开；或 `xattr -cr ~/Desktop/AI翻译.app`
+发给别人请发 **ZIP**（不要直接传 `.app`，微信/网盘会弄坏签名）。对方解压后**右键 → 打开**。
+
+若仍提示已损坏：`xattr -cr ~/Desktop/AI翻译.app` 后再右键打开。
 
 ## 文件
 
