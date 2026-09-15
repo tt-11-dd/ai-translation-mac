@@ -227,7 +227,15 @@ struct SettingsView: View {
 
             Toggle("打开时清空上次内容", isOn: $settings.clearOnOpen)
             Toggle("打开时读取剪贴板", isOn: $settings.useClipboardOnOpen)
-            Toggle("识别图片后自动翻译", isOn: $settings.autoTranslateOnOpen)
+            Toggle(isOn: $settings.autoTranslateOnOpen) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("打开时自动翻译")
+                    Text("复制唤醒或识别图片后直接翻译，无需再点按钮")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .disabled(!settings.useClipboardOnOpen)
             Toggle("译完自动复制", isOn: $settings.autoCopyOnComplete)
         }
     }

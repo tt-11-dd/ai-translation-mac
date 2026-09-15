@@ -44,7 +44,12 @@ final class TranslationViewModel: ObservableObject {
            let clip = NSPasteboard.general.string(forType: .string)?
             .trimmingCharacters(in: .whitespacesAndNewlines),
            !clip.isEmpty {
+            // 与上次填入/译出相同：避免把译文再翻回去；清空后仍回填，方便继续改
             if clip == lastClipboardFingerprint {
+                if inputText.isEmpty {
+                    inputText = clip
+                    statusMessage = "已填入剪贴板"
+                }
                 applySmartLanguagesIfNeeded()
                 return
             }
@@ -52,6 +57,7 @@ final class TranslationViewModel: ObservableObject {
             lastClipboardFingerprint = clip
             statusMessage = "已填入剪贴板"
             applySmartLanguagesIfNeeded()
+            maybeAutoTranslate()
             return
         }
 
@@ -67,6 +73,14 @@ final class TranslationViewModel: ObservableObject {
         }
 
         applySmartLanguagesIfNeeded()
+    }
+
+    /// 打开时自动翻译（设置开关）；指纹命中路径不会走到这里，避免译文回灌循环
+    private func maybeAutoTranslate() {
+        guard settings.autoTranslateOnOpen else { return }
+        let trimmed = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        Task { await translate() }
     }
 
     /// 识别剪贴板图片中的文字并填入，可自动翻译
@@ -88,7 +102,7 @@ final class TranslationViewModel: ObservableObject {
         statusMessage = "已识别图片文字"
         applySmartLanguagesIfNeeded()
 
-        if settings.autoTranslateOnOpen || forceTranslate {
+        if forceTranslate || settings.autoTranslateOnOpen {
             await translate()
         }
     }
