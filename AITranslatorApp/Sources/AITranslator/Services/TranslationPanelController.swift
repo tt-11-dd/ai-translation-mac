@@ -134,7 +134,9 @@ final class TranslationPanelController: NSObject {
         panel.titlebarAppearsTransparent = false
         panel.isFloatingPanel = true
         panel.level = .floating
-        panel.hidesOnDeactivate = false
+        // 点其他 App 或桌面空白处（本 App 失焦）时自动收起，避免窗口一直压在最上层；
+        // 需要时用 ⌘⇧T、菜单栏图标或 ⌘⇧E / ⌘⇧O 重新唤出。
+        panel.hidesOnDeactivate = true
         panel.isReleasedWhenClosed = false
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.becomesKeyOnlyIfNeeded = false
