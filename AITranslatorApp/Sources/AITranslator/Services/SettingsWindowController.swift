@@ -38,7 +38,7 @@ final class SettingsWindowController: NSObject {
             SettingsWindowController.shared.hide()
         }
         let hosting = NSHostingView(rootView: content)
-        hosting.frame = NSRect(x: 0, y: 0, width: 520, height: 640)
+        hosting.frame = NSRect(x: 0, y: 0, width: 580, height: 530)
 
         let window = NSWindow(
             contentRect: hosting.frame,
@@ -46,7 +46,7 @@ final class SettingsWindowController: NSObject {
             backing: .buffered,
             defer: false
         )
-        window.title = "设置"
+        window.title = "偏好设置"
         window.contentView = hosting
         window.isReleasedWhenClosed = false
         window.level = .floating

@@ -1,8 +1,43 @@
 import AppKit
 import SwiftUI
 
-/// 双击全选的 NSTextView：双击任意位置选中整段文本（翻译场景比「选词」更实用）
+/// 双击全选的 NSTextView：双击任意位置选中整段文本，内置与光标完美对齐的原生占位符
 final class SelectAllOnDoubleClickTextView: NSTextView {
+    var placeholder: String? {
+        didSet { needsDisplay = true }
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        guard let placeholder, string.isEmpty else { return }
+
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: font ?? NSFont.systemFont(ofSize: 13),
+            .foregroundColor: NSColor.placeholderTextColor
+        ]
+
+        let origin = textContainerOrigin
+        let textRect = NSRect(
+            x: origin.x + 2,
+            y: origin.y,
+            width: max(0, bounds.width - origin.x * 2 - 4),
+            height: max(0, bounds.height - origin.y)
+        )
+        (placeholder as NSString).draw(in: textRect, withAttributes: attributes)
+    }
+
+    override func becomeFirstResponder() -> Bool {
+        let ok = super.becomeFirstResponder()
+        needsDisplay = true
+        return ok
+    }
+
+    override func resignFirstResponder() -> Bool {
+        let ok = super.resignFirstResponder()
+        needsDisplay = true
+        return ok
+    }
+
     override func mouseDown(with event: NSEvent) {
         if event.clickCount >= 3 {
             let fullRange = NSRange(location: 0, length: (string as NSString).length)
@@ -48,6 +83,7 @@ final class EditorFocusCoordinator {
 /// 仅在内容超出时显示滚动条（overlay 风格）
 struct AutohidingTextEditor: NSViewRepresentable {
     @Binding var text: String
+    var placeholder: String? = nil
     var isEditable: Bool = true
     var fontSize: CGFloat = 14
     /// 按 id 注册到焦点协调器，用于 Tab 切换
@@ -70,6 +106,7 @@ struct AutohidingTextEditor: NSViewRepresentable {
         let textView = SelectAllOnDoubleClickTextView()
         textView.delegate = context.coordinator
         textView.string = text
+        textView.placeholder = placeholder
         textView.isRichText = false
         textView.allowsUndo = true
         textView.isEditable = isEditable
@@ -78,7 +115,7 @@ struct AutohidingTextEditor: NSViewRepresentable {
         textView.font = NSFont.systemFont(ofSize: fontSize)
         textView.textColor = NSColor.labelColor
         textView.insertionPointColor = NSColor.labelColor
-        textView.textContainerInset = NSSize(width: 6, height: 8)
+        textView.textContainerInset = NSSize(width: 8, height: 10)
         textView.isVerticallyResizable = true
         textView.isHorizontallyResizable = false
         textView.autoresizingMask = [.width]
@@ -105,12 +142,13 @@ struct AutohidingTextEditor: NSViewRepresentable {
     }
 
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
-        guard let textView = scrollView.documentView as? NSTextView else { return }
+        guard let textView = scrollView.documentView as? SelectAllOnDoubleClickTextView else { return }
         if textView.string != text {
             textView.string = text
             // 外部/程序化更新文本（如剪贴板填入、历史回填）时，光标移到末尾
             textView.setSelectedRange(NSRange(location: (text as NSString).length, length: 0))
         }
+        textView.placeholder = placeholder
         textView.isEditable = isEditable
         textView.font = NSFont.systemFont(ofSize: fontSize)
         scrollView.autohidesScrollers = true

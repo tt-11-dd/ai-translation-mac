@@ -7,12 +7,21 @@ final class TranslationViewModel: ObservableObject {
     @Published var outputText: String = ""
     @Published var sourceLanguage: TranslateLanguage
     @Published var targetLanguage: TranslateLanguage
+    @Published var currentMode: TaskMode = .translate
     @Published var isTranslating = false
     @Published var errorMessage: String?
     @Published var statusMessage: String?
     @Published var isSpeaking = false
     /// 智能互翻下用户手动改了语言，本次不再自动覆盖
     @Published var smartOverride = false
+
+    /// 判断当前输入是否可能是单个单词或简短短语（用于智能推荐深度查词）
+    var isSingleWord: Bool {
+        let trimmed = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !trimmed.contains("\n") else { return false }
+        let words = trimmed.components(separatedBy: .whitespaces).filter { !$0.isEmpty }
+        return words.count <= 2 && trimmed.count <= 35
+    }
 
     private let translator = DeepSeekTranslator.makeDefault()
     private let settings = AppSettings.shared
@@ -156,6 +165,12 @@ final class TranslationViewModel: ObservableObject {
     }
 
     func translate() async {
+        await execute(mode: currentMode)
+    }
+
+    /// 执行指定 AI 模式任务（翻译 / 润色 / 纠错 / 词典 / 学术）
+    func execute(mode: TaskMode) async {
+        currentMode = mode
         let trimmed = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             outputText = ""
@@ -170,20 +185,27 @@ final class TranslationViewModel: ObservableObject {
 
         translateTask = Task { [weak self] in
             guard let self else { return }
-            await self.runStreamingTranslate(requestID: id)
+            await self.runStreamingProcess(mode: mode, requestID: id)
         }
         await translateTask?.value
     }
 
-    private func runStreamingTranslate(requestID id: UUID) async {
+    private func runStreamingProcess(mode: TaskMode, requestID id: UUID) async {
         isTranslating = true
         errorMessage = nil
-        statusMessage = "正在翻译…"
+        switch mode {
+        case .translate: statusMessage = "正在翻译…"
+        case .polish: statusMessage = "正在地道润色…"
+        case .grammar: statusMessage = "正在检查语法…"
+        case .dictionary: statusMessage = "正在查询词典…"
+        case .academic: statusMessage = "正在学术改写…"
+        }
         outputText = ""
 
         do {
-            let result = try await translator.translateStream(
+            let result = try await translator.processStream(
                 text: inputText,
+                mode: mode,
                 source: sourceLanguage,
                 target: targetLanguage
             ) { [weak self] partial in
@@ -209,13 +231,22 @@ final class TranslationViewModel: ObservableObject {
             // 记录用量（按输入字符数）
             UsageStore.shared.record(characters: inputText.count)
 
+            let finishMsg: String
+            switch mode {
+            case .translate: finishMsg = "翻译完成"
+            case .polish: finishMsg = "润色完成"
+            case .grammar: finishMsg = "纠错完成"
+            case .dictionary: finishMsg = "词典解析完成"
+            case .academic: finishMsg = "学术改写完成"
+            }
+
             if settings.autoCopyOnComplete {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(result, forType: .string)
                 lastClipboardFingerprint = result
-                statusMessage = "翻译完成，已复制"
+                statusMessage = "\(finishMsg)，已复制"
             } else {
-                statusMessage = "翻译完成"
+                statusMessage = finishMsg
             }
         } catch is CancellationError {
         } catch {

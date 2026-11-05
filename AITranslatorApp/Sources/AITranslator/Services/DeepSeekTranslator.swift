@@ -1,5 +1,36 @@
 import Foundation
 
+/// 处理任务模式：常规翻译 / 深度润色 / 语法纠错 / 词典深度解析 / 学术改写
+enum TaskMode: String, CaseIterable, Identifiable, Codable {
+    case translate = "翻译"
+    case polish = "润色"
+    case grammar = "纠错"
+    case dictionary = "词典"
+    case academic = "学术"
+
+    var id: String { rawValue }
+
+    var icon: String {
+        switch self {
+        case .translate: return "arrow.triangle.2.circlepath"
+        case .polish: return "sparkles"
+        case .grammar: return "checkmark.bubble"
+        case .dictionary: return "character.book.closed"
+        case .academic: return "graduationcap"
+        }
+    }
+
+    var tip: String {
+        switch self {
+        case .translate: return "多语言智能准确直译"
+        case .polish: return "母语级地道表达润色"
+        case .grammar: return "排查并修正语法与拼写"
+        case .dictionary: return "音标、释义、搭配与例句解析"
+        case .academic: return "顶会学术论文规范改写"
+        }
+    }
+}
+
 enum TranslationError: LocalizedError, Equatable {
     case missingAPIKey
     case emptyText
@@ -60,10 +91,11 @@ struct DeepSeekTranslator {
         DeepSeekTranslator(settings: .shared)
     }
 
-    /// 流式翻译：每收到一段内容就回调累计全文；超长文本自动分块逐段翻译
+    /// 统一流式处理：支持常规翻译、母语润色、语法纠错、深度词典、学术改写
     @MainActor
-    func translateStream(
+    func processStream(
         text: String,
+        mode: TaskMode = .translate,
         source: TranslateLanguage,
         target: TranslateLanguage,
         onUpdate: @escaping @MainActor (String) -> Void
@@ -81,7 +113,7 @@ struct DeepSeekTranslator {
             throw TranslationError.invalidURL
         }
 
-        let systemPrompt = buildSystemPrompt()
+        let systemPrompt = buildSystemPrompt(for: mode, target: target)
         let sourceHint = source == .auto
             ? "Detect the source language automatically."
             : "Source language: \(source.promptName)."
@@ -93,20 +125,45 @@ struct DeepSeekTranslator {
         for (index, chunk) in chunks.enumerated() {
             try Task.checkCancellation()
 
-            let userPrompt = """
-            \(sourceHint)
-            Target language: \(target.promptName).
+            let userPrompt: String
+            switch mode {
+            case .translate:
+                userPrompt = """
+                \(sourceHint)
+                Target language: \(target.promptName).
 
-            Text to translate:
-            \(chunk)
-            """
+                Text to translate:
+                \(chunk)
+                """
+            case .polish:
+                userPrompt = """
+                Target language: \(target.promptName).
+                Polish and improve this text into natural, native, idiomatic writing:
+                \(chunk)
+                """
+            case .grammar:
+                userPrompt = """
+                Check grammar and correct this text:
+                \(chunk)
+                """
+            case .dictionary:
+                userPrompt = """
+                Provide a complete dictionary breakdown for:
+                \(chunk)
+                """
+            case .academic:
+                userPrompt = """
+                Elevate and rewrite this text into formal publication-ready academic English:
+                \(chunk)
+                """
+            }
+
             let chunkResult = try await streamOnce(
                 url: url,
                 apiKey: apiKey,
                 systemPrompt: systemPrompt,
                 userPrompt: userPrompt
             ) { [prefix] partial in
-                // 已有分块的结果 + 当前分块的累计输出
                 let combined = prefix.isEmpty ? partial : prefix + "\n" + partial
                 onUpdate(combined)
             }
@@ -114,7 +171,6 @@ struct DeepSeekTranslator {
             allResults.append(chunkResult)
             prefix = allResults.joined(separator: "\n")
 
-            // 多于一个分块时，在分块间隙也同步一次完整结果
             if chunks.count > 1 && index < chunks.count - 1 {
                 onUpdate(prefix)
             }
@@ -123,6 +179,17 @@ struct DeepSeekTranslator {
         let result = prefix.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !result.isEmpty else { throw TranslationError.emptyResponse }
         return result
+    }
+
+    /// 兼容旧的 translateStream 调用
+    @MainActor
+    func translateStream(
+        text: String,
+        source: TranslateLanguage,
+        target: TranslateLanguage,
+        onUpdate: @escaping @MainActor (String) -> Void
+    ) async throws -> String {
+        try await processStream(text: text, mode: .translate, source: source, target: target, onUpdate: onUpdate)
     }
 
     // MARK: - 单次流式请求
@@ -213,29 +280,67 @@ struct DeepSeekTranslator {
     // MARK: - System prompt 与分块
 
     @MainActor
-    private func buildSystemPrompt() -> String {
-        var prompt = """
-        You are a professional translation engine.
-        Translate the user's text accurately and naturally.
-        Preserve meaning, tone, and formatting (line breaks, markdown, code blocks).
-        Output ONLY the translation. Do not add explanations, quotes, or notes.
-        \(settings.translationStyle.promptInstruction)
-        """
+    private func buildSystemPrompt(for mode: TaskMode, target: TranslateLanguage) -> String {
+        switch mode {
+        case .translate:
+            var prompt = """
+            You are a professional translation engine.
+            Translate the user's text accurately and naturally into \(target.promptName).
+            Preserve meaning, tone, and formatting (line breaks, markdown, code blocks).
+            Output ONLY the translation. Do not add explanations, quotes, or notes.
+            \(settings.translationStyle.promptInstruction)
+            """
 
-        if !settings.glossary.isEmpty {
-            let entries = settings.glossary
-                .filter { !$0.source.isEmpty && !$0.target.isEmpty }
-                .map { "\($0.source) → \($0.target)" }
-            if !entries.isEmpty {
-                prompt += """
+            if !settings.glossary.isEmpty {
+                let entries = settings.glossary
+                    .filter { !$0.source.isEmpty && !$0.target.isEmpty }
+                    .map { "\($0.source) → \($0.target)" }
+                if !entries.isEmpty {
+                    prompt += """
 
-                Use the following glossary. For these terms, ALWAYS use the specified translation even if context suggests otherwise:
-                \(entries.joined(separator: "\n"))
-                """
+                    Use the following glossary. For these terms, ALWAYS use the specified translation even if context suggests otherwise:
+                    \(entries.joined(separator: "\n"))
+                    """
+                }
             }
-        }
+            return prompt
 
-        return prompt
+        case .polish:
+            return """
+            You are a master bilingual editor and native-speaker writer.
+            Refine and polish the user's text to make it natural, idiomatic, clear, and elegant.
+            Output ONLY the polished text. Do not add explanations, conversational filler, or quotation marks.
+            """
+
+        case .grammar:
+            return """
+            You are a professional language proofreader.
+            1. First line: Provide the fully corrected version of the text.
+            2. Followed by a concise bulleted summary of key grammar/spelling issues resolved (if any).
+            Keep it clean and helpful.
+            """
+
+        case .dictionary:
+            return """
+            You are an authoritative bilingual learner's dictionary (Oxford & Collins style).
+            For the queried word or short phrase, output in this exact clean format:
+            **Word** `/UK Phonetic/`  `/US Phonetic/`
+            - **[Part of Speech]** Chinese definition
+            - **Common Collocations / Phrases**: phrase 1 (Chinese meaning), phrase 2
+            - **Example Sentences**:
+              1. *English sentence* (Chinese translation)
+              2. *English sentence* (Chinese translation)
+            Do not wrap in extra markdown codeblocks. Output directly.
+            """
+
+        case .academic:
+            return """
+            You are a senior academic reviewer for Nature and IEEE publications.
+            Rewrite the user's text into rigorous, objective, formal, and authoritative academic English.
+            Use scholarly vocabulary and appropriate passive/objective structures.
+            Output ONLY the revised academic text without introductory notes.
+            """
+        }
     }
 
     /// 把长文本按段落切块，每块不超过 chunkSize 字符；不足阈值时直接整段返回

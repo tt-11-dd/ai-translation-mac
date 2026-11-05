@@ -2,12 +2,28 @@ import AppKit
 import SwiftUI
 
 @MainActor
-final class TranslationPanelController: NSObject {
+final class TranslationPanelController: NSObject, ObservableObject {
     static let shared = TranslationPanelController()
 
     private var panel: NSPanel?
     private var hostingView: NSHostingView<TranslationPopupView>?
     private let viewModel = TranslationViewModel()
+
+    @Published var isPinned: Bool = UserDefaults.standard.bool(forKey: "translationWindowPinned") {
+        didSet {
+            UserDefaults.standard.set(isPinned, forKey: "translationWindowPinned")
+            updatePinState()
+        }
+    }
+
+    func togglePin() {
+        isPinned.toggle()
+    }
+
+    private func updatePinState() {
+        guard let panel else { return }
+        panel.hidesOnDeactivate = !isPinned
+    }
 
     private static let frameKey = "translationPanelFrame"
 
@@ -130,18 +146,24 @@ final class TranslationPanelController: NSObject {
             defer: false
         )
         panel.title = "AI 翻译"
-        panel.titleVisibility = .visible
-        panel.titlebarAppearsTransparent = false
+        panel.titleVisibility = .hidden
+        panel.titlebarAppearsTransparent = true
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = true
         panel.isFloatingPanel = true
         panel.level = .floating
-        // 点其他 App 或桌面空白处（本 App 失焦）时自动收起，避免窗口一直压在最上层；
-        // 需要时用 ⌘⇧T、菜单栏图标或 ⌘⇧E / ⌘⇧O 重新唤出。
-        panel.hidesOnDeactivate = true
+        panel.hidesOnDeactivate = !isPinned
         panel.isReleasedWhenClosed = false
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.becomesKeyOnlyIfNeeded = false
         panel.isMovableByWindowBackground = true
-        panel.minSize = NSSize(width: 520, height: 440)
+        panel.minSize = NSSize(width: 540, height: 460)
+
+        // 隐藏系统默认窗口小按钮，采用统一沉浸式的无边框现代设计
+        panel.standardWindowButton(.closeButton)?.isHidden = true
+        panel.standardWindowButton(.miniaturizeButton)?.isHidden = true
+        panel.standardWindowButton(.zoomButton)?.isHidden = true
         panel.contentView = hosting
         panel.delegate = self
 
